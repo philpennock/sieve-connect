@@ -444,10 +444,14 @@ sub sget
 	if ($l =~ /{(\d+)\+?}\s*\n?\z/) {
 		debug "... literal string response, length $1";
 		my $len = $1;
-		while ($len > 0) {
-			my $extra = $sock->getline();
-			$len -= length($extra);
-			$l .= $extra;
+		if ($len == 0) {
+			my $discard = $sock->getline();
+		} else {
+			while ($len > 0) {
+				my $extra = $sock->getline();
+				$len -= length($extra);
+				$l .= $extra;
+			}
 		}
 		$dochomp = 0;
 	}
