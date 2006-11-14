@@ -251,7 +251,7 @@ my $authconversation = $sasl->client_new('sieve', $server, '')
 
 	my $sasl_tosend = $authconversation->client_start();
 
-	if (defined $sasl_tosend) {
+	if (defined $sasl_tosend and length $sasl_tosend) {
 		my $mimedata = encode_base64($sasl_tosend, '');
 		my $mlen = length($mimedata);
 		ssend $sock, qq!AUTHENTICATE "$sasl_m" {${mlen}+}!;
@@ -261,18 +261,12 @@ my $authconversation = $sasl->client_new('sieve', $server, '')
 	}
 	sget $sock;
 
-	while ($_ !~ /^(OK|NO)(?:\s.*)?$/) {
-		unless (/^{(\d+)}$/) {
+	while ($_ !~ /^(OK|NO)(?:\s.*)?$/m) {
+		unless (/^{(\d+)\+?}\r?$/m) {
 			sfinish $sock, "*";
 			die $sock, "Failure to parse server SASL response.\n";
 		}
-		my $challenge_len = $1;
-		my $challenge = '';
-		while ($challenge_len > 0) {
-			sget $sock;
-			$challenge_len -= length($_);
-			$challenge .= $_;
-		}
+		(my $challenge = $_) =~ s/^{\d+\+?}\r?\n?//;
 		$challenge = decode_base64($challenge);
 
 		my $response = $authconversation->client_step($challenge);
@@ -312,6 +306,9 @@ my $authconversation = $sasl->client_new('sieve', $server, '')
 if ($action eq 'list') {
 	ssend $sock, "LISTSCRIPTS";
 	sget $sock;
+	# These can also be literals, not quoted.  So this technically needs
+	# to be reexpressed to a standard output format.  Let's just hope
+	# no server ever does that.
 	while (/^\"/) {
 		print "$_\n";
 		sget $sock;
@@ -355,7 +352,7 @@ if ($action eq 'download') {
 		warn "Empty script?\n";
 		sfinish $sock; exit 0;
 	}
-	unless (/^{(\d+)}$/) {
+	unless (/^{(\d+)}\r?$/m) {
 		closedie($sock, "Failed to parse server response to GETSCRIPT");
 	}
 	my $fh;
@@ -364,13 +361,9 @@ if ($action eq 'download') {
 			or closedie($sock, "write-open($localsievename) failed: $!\n");
 		select $fh;
 	}
-	my $len = $1;
-	while ($len > 0) {
-		sget $sock, '-nochomp';
-		print $_;
-		$len -= length($_);
-	}
-	sget $sock;
+	s/^{\d+\+?}\r?\n?//m;
+	print $_;
+	#sget $sock;
 	if (defined $fh) {
 		$fh->close()
 		 or closedie($sock, "write-close($localsievename) failed: $!\n");
@@ -444,9 +437,21 @@ sub ssend
 sub sget
 {
 	my $sock = shift;
+	my $dochomp = 1;
+	$dochomp = 0 if defined $_[0] and $_[0] eq '-nochomp';
 	my $l;
 	$l = $sock->getline();
-	unless (defined $_[0] and $_[0] eq '-nochomp') {
+	if ($l =~ /{(\d+)\+?}\s*\n?\z/) {
+		debug "... literal string response, length $1";
+		my $len = $1;
+		while ($len > 0) {
+			my $extra = $sock->getline();
+			$len -= length($extra);
+			$l .= $extra;
+		}
+		$dochomp = 0;
+	}
+	if ($dochomp) {
 		chomp $l; $l =~ s/\s*$//;
 	}
 	received $l;
@@ -551,6 +556,13 @@ default usercode.
 If the authentication protocol negotiates a protection layer then things
 will rapidly Go Bad.  A mitigating factor is that no protection layer
 should be negotiated whilst under STARTTLS protection.  Just use TLS!
+
+When listing scripts, the format is based upon the raw server output,
+assuming that the server uses quoted-strings for the script names.  The
+output is just passed back on the basis that it's a fairly good interface
+to pass to a program.  But a server could choose to use literal strings,
+even though the results are defined as line-break separated -- that would
+mean that some linebreaks are special.  Hopefully no server will do this.
 
 =head1 HISTORY
 
