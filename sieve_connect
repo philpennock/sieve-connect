@@ -20,6 +20,7 @@ my %ssl_options = (
 # No user-serviceable parts below
 
 use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
+use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
 use Errno;
 use Getopt::Long;
 use IO::File;
@@ -41,7 +42,8 @@ sub closedie_NOmsg;
 my $DEBUGGING = 0;
 my $localsievename;
 my $remotesievename;
-my ($user, $authzid, $authmech);
+my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile);
+my $prioritise_auth_external = 0;
 my $server = 'localhost';
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -52,7 +54,11 @@ GetOptions(
 	"server=s"	=> \$server,
 	"port=s"	=> \$port, # not num, allow service names
 	"user=s"	=> \$user,
+	"authzid=s"	=> \$authzid,
 	"authmech=s"	=> \$authmech,
+	"clientkey=s"	=> \$sslkeyfile,
+	"clientcert=s"	=> \$sslcertfile,
+	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
@@ -77,6 +83,17 @@ die "Bad port specification\n"
 
 unless (defined $user) {
 	$user = getpwuid $>; # FIXME: will break Win32
+}
+
+if ((defined $sslkeyfile and not defined $sslcertfile) or
+    (defined $sslcertfile and not defined $sslkeyfile)) {
+	die "Need both a client key and cert for SSL certificate auth.\n";
+}
+if (defined $sslkeyfile) {
+	$ssl_options{SSL_use_cert} = 1;
+	$ssl_options{SSL_key_file} = $sslkeyfile;
+	$ssl_options{SSL_cert_file} = $sslcertfile;
+	$prioritise_auth_external = 1;
 }
 
 if (defined $localsievename and not defined $remotesievename) {
@@ -126,6 +143,9 @@ my %capa_dosplit = map {$_ => 1} qw( SASL SIEVE );
 sub parse_capabilities
 {
 	my $sock = shift;
+	my $external_first = shift;
+	$external_first = 0 unless defined $external_first;
+
 	%raw_capabilities = ();
 	%capa = ();
 	while (<$sock>) {
@@ -146,6 +166,25 @@ sub parse_capabilities
 			warn "Unhandled server line: $_\n"
 		}
 	}
+	if (exists $capa{SASL} and $external_first
+			and grep {uc($_) eq 'EXTERNAL'} @{$capa{SASL}}) {
+		# We do two things.  We shift the EXTERNAL to the head of the
+		# list, suggesting that it's the server's preferred choice.
+		# We then mess around inside the Authen::SASL::Perl::EXTERNAL
+		# private stuff (name starts with an underscore) to bump up
+		# its priority -- for some reason, the method which is not
+		# interactive and says "use information already available"
+		# is less favoured than some others.
+		debug "auth: shifting EXTERNAL to start of mechanism list";
+		my @sasl = ('EXTERNAL');
+		foreach (@{$capa{SASL}}) {
+			push @sasl, $_ unless uc($_) eq 'EXTERNAL';
+		}
+		$capa{SASL} = \@sasl;
+		$raw_capabilities{SASL} = join(' ', @sasl);
+		no warnings 'redefine';
+		$Authen::SASL::Perl::EXTERNAL::{_order} = sub { 10 };
+	}
 }
 parse_capabilities $sock;
 
@@ -158,7 +197,7 @@ if (exists $capa{STARTTLS}) {
 		die "STARTTLS promotion failed: $e\n";
 	};
 	ssend $sock, "CAPABILITY";
-	parse_capabilities $sock;
+	parse_capabilities($sock, $prioritise_auth_external);
 }
 
 my %authen_sasl_params;
@@ -463,6 +502,8 @@ sieve_connect -- simple sieve command-line client
 	       [--debug]
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
+	       [--clientkey <file> --clientcert <file>]|
+	        [--clientkeycert <file>]
 	       [--authmech <mechanism>]
 	       [--upload|--download|--list|--delete|
 	        --activate|--deactivate]
@@ -490,6 +531,11 @@ with getpwuid() available and your Cyrus account name matches your system
 account name.  C<--authmech> can be used to force a particular authenticaiton
 mechanism.  C<--authzid> can be used to request authorisation to act as
 the specified id.
+
+For SSL client certificate authentication, either C<--clientkeycert> may
+be used to refer to a file with both the key and cert present or both
+C<--clientkey> and C<--clientcert> should point to the relevant files.
+The data should be in PEM file-format.
 
 The remaining options denote actions.  One, and only one, action must be
 present.  This is a simple client, so is not scriptable beyond
