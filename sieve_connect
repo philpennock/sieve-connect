@@ -1,0 +1,550 @@
+#!/usr/bin/perl
+#
+# $HeadURL$
+# $Id$
+#
+# timesieved client script
+#
+
+use warnings;
+use strict;
+
+my %ssl_options = (
+	SSL_version	=> 'TLSv1',
+	SSL_cipher_list	=> 'ALL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
+	SSL_verify_mode	=> 0x01,
+	SSL_ca_path	=> '/etc/ssl/certs',
+);
+
+# ######################################################################
+# No user-serviceable parts below
+
+use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
+use Errno;
+use Getopt::Long;
+use IO::File;
+use IO::Socket::INET6;
+use IO::Socket::SSL 0.97; # SSL_ca_path bogus before 0.97
+use MIME::Base64;
+use Pod::Usage;
+use Term::ReadKey;
+
+sub debug;
+sub sent;
+sub ssend;
+sub sget;
+sub sfinish;
+sub received;
+sub closedie;
+sub closedie_NOmsg;
+
+my $DEBUGGING = 0;
+my $localsievename;
+my $remotesievename;
+my ($user, $authzid, $authmech);
+my $server = 'localhost';
+my $port = 'sieve(2000)';
+my $net_domain = AF_UNSPEC;
+my $action = 'noop';
+GetOptions(
+	"localsieve=s"	=> \$localsievename,
+	"remotesieve=s"	=> \$remotesievename,
+	"server=s"	=> \$server,
+	"port=s"	=> \$port, # not num, allow service names
+	"user=s"	=> \$user,
+	"authmech=s"	=> \$authmech,
+	"4"		=> sub { $net_domain = AF_INET },
+	"6"		=> sub { $net_domain = AF_INET6 },
+	"debug"		=> \$DEBUGGING,
+	# option names can be short-circuited, $action is complete:
+	"upload"	=> sub { $action = 'upload' },
+	"download"	=> sub { $action = 'download' },
+	"list"		=> sub { $action = 'list' },
+	"delete"	=> sub { $action = 'delete' },
+	"activate"	=> sub { $action = 'activate' },
+	"deactivate"	=> sub { $action = 'deactivate' },
+	'help|?'	=> sub { pod2usage(0) },
+	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
+) or pod2usage(2);
+# We don't implement HAVESPACE <script> <size>
+
+pod2usage(2) if $action eq 'noop';
+
+die "Bad server name\n"
+	unless $server =~ /^[A-Za-z0-9_.-]+\z/;
+die "Bad port specification\n"
+	unless $port =~ /^[A-Za-z0-9_()-]+\z/;
+
+unless (defined $user) {
+	$user = getpwuid $>; # FIXME: will break Win32
+}
+
+if (defined $localsievename and not defined $remotesievename) {
+	$remotesievename = $localsievename;
+}
+
+if (defined $localsievename and $action eq 'upload') {
+	-r $localsievename or die "unable to read \"$localsievename\": $!\n";
+}
+if ($action eq 'download' and not defined $localsievename) {
+	die "Need a local filename (or '-') for download.\n";
+}
+if (($action eq 'activate' or $action eq 'delete' or $action eq 'download')
+		and not defined $remotesievename) {
+	die "Need a remote scriptname for '$action'\n";
+}
+if ($action eq 'deactivate' and defined $remotesievename) {
+	die "Deactivate deactivates the current script, may not specify one.\n";
+	# Future feature -- list and deactivate if specified script is
+	# current.  That has a concurrency race condition and is not
+	# conceivably useful, so ignored at least for the present.
+}
+
+# ######################################################################
+# Start work; connect, start TLS, authenticate
+
+my $sock = IO::Socket::INET6->new(
+	PeerHost	=> $server,
+	PeerPort	=> $port,
+	Proto		=> 'tcp',
+	Domain		=> $net_domain,
+);
+unless (defined $sock) {
+	my $extra = '';
+	if ($!{EINVAL} and $net_domain != AF_UNSPEC) {
+	  $extra = " (Probably no host record for overriden IP version)\n";
+	}
+	die qq{Connection to "$server" [port $port] failed: $!\n$extra};
+}
+
+$sock->autoflush(1);
+
+my %capa;
+my %raw_capabilities;
+my %capa_dosplit = map {$_ => 1} qw( SASL SIEVE );
+
+sub parse_capabilities
+{
+	my $sock = shift;
+	%raw_capabilities = ();
+	%capa = ();
+	while (<$sock>) {
+		chomp; s/\s*$//;
+		received;
+		last if /^OK$/;
+		if (/^\"([^"]+)\"\s+\"(.+)\"$/) {
+			my ($k, $v) = ($1, $2);
+			$raw_capabilities{$k} = $v;
+			$capa{$k} = $v;
+			if (exists $capa_dosplit{$k}) {
+				$capa{$k} = [ split /\s+/, $v ];
+			}
+		} elsif (/^\"([^"]+)\"$/) {
+			$raw_capabilities{$1} = '';
+			$capa{$1} = 1;
+		} else {
+			warn "Unhandled server line: $_\n"
+		}
+	}
+}
+parse_capabilities $sock;
+
+#foreach my $k (sort keys %raw_capabilities) {
+#	print "Capability $k\n\t$raw_capabilities{$k}\n";
+#}
+
+if (exists $capa{STARTTLS}) {
+	ssend $sock, "STARTTLS";
+	sget $sock;
+	die "STARTTLS request rejected: $_\n" unless /^OK\s+\"/;
+	IO::Socket::SSL->start_SSL($sock, %ssl_options) or do {
+		my $e = IO::Socket::SSL::errstr();
+		die "STARTTLS promotion failed: $e\n";
+	};
+	ssend $sock, "CAPABILITY";
+	parse_capabilities $sock;
+#	foreach my $k (sort keys %raw_capabilities) {
+#		print "Capability $k\n\t$raw_capabilities{$k}\n";
+#	}
+}
+
+my %authen_sasl_params;
+$authen_sasl_params{callback}{user} = $user;
+if (defined $authzid) {
+	$authen_sasl_params{callback}{authname} = $authzid;
+}
+$authen_sasl_params{callback}{pass} = sub {
+	ReadMode('noecho');
+	{ print "Sieve/IMAP Password: "; $| = 1; }
+	my $password = ReadLine(0);
+	ReadMode('normal');
+	print "\n";
+	chomp $password if defined $password;
+	return $password;
+};
+
+closedie $sock, "Do not have an authentication mechanism list\n"
+	unless ref($capa{SASL}) eq 'ARRAY';
+if (defined $authmech) {
+	$authmech = uc $authmech;
+	if (grep {$_ eq $authmech} map {uc $_} @{$capa{SASL}}) {
+		debug "auth: will try requested SASL mechanism $authmech";
+	} else {
+		closedie $sock, "Server does not offer SASL mechanism $authmech\n";
+	}
+	$authen_sasl_params{mechanism} = $authmech;
+} else {
+	$authen_sasl_params{mechanism} = $raw_capabilities{SASL};
+}
+
+my $sasl = Authen::SASL->new(%authen_sasl_params);
+die "SASL object init failed (local problem): $!\n"
+	unless defined $sasl;
+
+my $authconversation = $sasl->client_new('sieve', $server)
+	or die "SASL conversation init failed (local problem): $!\n";
+{
+	my $sasl_m = $authconversation->mechanism()
+		or die "Oh why can't I decide which auth mech to send?\n";
+	if ($sasl_m eq 'GSSAPI') {
+		# gross hack, but it was bad of us to assume anything.
+		# It also means that we ignore anything specified by the
+		# user, which is good since it's Kerberos anyway.
+		# (Major Assumption Alert!)
+		$authconversation->callback(
+			user => undef,
+			pass => undef,
+		);
+	}
+
+	my $sasl_tosend = $authconversation->client_start();
+
+	if (defined $sasl_tosend) {
+		my $mimedata = encode_base64($sasl_tosend, '');
+		my $mlen = length($mimedata);
+		ssend $sock, qq!AUTHENTICATE "$sasl_m" {${mlen}+}!;
+		ssend $sock, $mimedata;
+	} else {
+		ssend $sock, qq{AUTHENTICATE "$sasl_m"};
+	}
+	sget $sock;
+
+	while ($_ !~ /^(OK|NO)(?:\s.*)$/) {
+		unless (/^{(\d+)}$/) {
+			sfinish $sock, "*";
+			die $sock, "Failure to parse server SASL response.\n";
+		}
+		my $challenge_len = $1;
+		my $challenge = '';
+		while ($challenge_len > 0) {
+			sget $sock;
+			$challenge_len -= length($_);
+			$challenge .= $_;
+		}
+		$challenge = decode_base64($challenge);
+
+		my $response = $authconversation->client_step($challenge);
+		$response = '' unless defined $response; # sigh
+		my $senddata = encode_base64($response, '');
+		my $sendlen = length $senddata;
+		my $sendsuffix = $sendlen > 0 ? '+' : '';
+		ssend $sock, "{$sendlen$sendsuffix}";
+		ssend $sock, $senddata if $sendlen > 0;
+		sget $sock;
+	}
+
+	if (/^NO((?:\s.*)?)$/) {
+		closedie_NOmsg $sock, $1, "Authentication refused by server";
+	}
+
+}
+
+# ######################################################################
+# We're in, do the requested action
+
+# Ugly poor-man's switch.  This isn't supposed to be part of a more extensible
+# whole.
+
+if ($action eq 'list') {
+	ssend $sock, "LISTSCRIPTS";
+	sget $sock;
+	while (/^\"/) {
+		print "$_\n";
+		sget $sock;
+	}
+	sfinish $sock; exit 0;
+}
+
+if ($action eq 'deactivate') {
+	$remotesievename = "";
+	$action = 'activate';
+}
+if ($action eq 'activate') {
+	ssend $sock, "SETACTIVE \"$remotesievename\"";
+	sget $sock;
+	unless (/^OK((?:\s.*)?)$/) {
+		warn "SETACTIVE($remotesievename) failed: $_\n";
+	}
+	sfinish $sock; exit 0;
+}
+
+if ($action eq 'delete') {
+	ssend $sock, "DELETESCRIPT \"$remotesievename\"";
+	sget $sock;
+	unless (/^OK((?:\s.*)?)$/) {
+		warn "DELETESCRIPT($remotesievename) failed: $_\n";
+	}
+	sfinish $sock; exit 0;
+}
+
+if ($action eq 'download') {
+	closedie $sock, "No local sieve name?\n" unless defined $localsievename;
+	closedie $sock, "No remote sieve name?\n" unless defined $remotesievename;
+	ssend $sock, qq{GETSCRIPT "$remotesievename"};
+	sget $sock;
+	if (/^NO((?:\s.*)?)$/) {
+		closedie_NOmsg $sock, $1, "Script not returned by server";
+	}
+	if (/^OK((?:\s.*)?)$/) {
+		warn "Empty script?\n";
+		sfinish $sock; exit 0;
+	}
+	unless (/^{(\d+)}$/) {
+		closedie $sock, "Failed to parse server response to GETSCRIPT";
+	}
+	my $fh;
+	unless ($localsievename eq '-') {
+		$fh = new IO::File $localsievename, '>'
+			or closedie $sock, "write-open($localsievename) failed: $!\n";
+		select $fh;
+	}
+	my $len = $1;
+	while ($len > 0) {
+		sget $sock, '-nochomp';
+		print $_;
+		$len -= length($_);
+	}
+	sget $sock;
+	if (defined $fh) {
+		$fh->close()
+		 or closedie $sock, "write-close($localsievename) failed: $!\n";
+	}
+	sfinish $sock; exit 0;
+}
+
+if ($action eq 'upload') {
+	closedie $sock, "No local sieve name?\n" unless defined $localsievename;
+	closedie $sock, "No remote sieve name?\n" unless defined $remotesievename;
+	# I'm going to assume that any Sieve script will easily fit in memory.
+	# Since Cyrus enforces admin-specified size constraints, this is
+	# probably pretty safe.
+	my $fh = new IO::File $localsievename, '<'
+		or closedie $sock, "aborting, read-open($localsievename) failed: $!\n";
+	my @scriptlines = $fh->getlines();
+	$fh->close() or closedie $sock, "aborting, read-close($localsievename failed: $!\n";
+
+	my $len = 0;
+	$len += length($_) foreach @scriptlines;
+
+	ssend $sock, "PUTSCRIPT \"$remotesievename\" {${len}+}";
+	ssend $sock, '-noeol', @scriptlines;
+	ssend $sock, '';
+	sget $sock;
+
+	unless (/^OK((?:\s.*)?)$/) {
+		warn "PUTSCRIPT($remotesievename) failed: $_\n";
+	}
+
+	sfinish $sock; exit 0;
+}
+
+
+print "We're in, but with nothing to do ... goodbye.\n";
+sfinish $sock;
+exit 0;
+
+# ######################################################################
+# minor routines
+
+sub debug
+{
+	return unless $DEBUGGING;
+	print STDERR "$_[0]\n";
+}
+
+sub sent { $_[0] = $_ unless defined $_[0]; debug ">>> $_[0]"; }
+sub received { $_[0] = $_ unless defined $_[0]; debug "<<< $_[0]"; }
+
+sub ssend
+{
+	my $sock = shift;
+	my $eol = "\r\n";
+	if (defined $_[0] and $_[0] eq '-noeol') {
+		shift;
+		$eol = '';
+	}
+	foreach my $l (@_) {
+		$sock->print("$l$eol");
+		sent $l;
+	}
+}
+
+sub sget
+{
+	my $sock = shift;
+	my $l;
+	$l = $sock->getline();
+	unless (defined $_[0] and $_[0] eq '-nochomp') {
+		chomp $l; $l =~ s/\s*$//;
+	}
+	received $l;
+	if (defined wantarray) {
+		return $l;
+	} else {
+		$_ = $l;
+	}
+}
+
+sub sfinish
+{
+	my $sock = shift;
+	if (defined $_[0]) {
+		ssend $sock, $_[0];
+		sget $sock;
+	}
+	ssend $sock, "LOGOUT";
+	sget $sock;
+}
+
+sub closedie
+{
+	my $sock = shift;
+	my $e = $!;
+	sfinish $sock;
+	$! = $e;
+	die @_;
+}
+
+sub closedie_NOmsg
+{
+	my $sock = shift;
+	my $suffix = shift;
+	if (length $suffix) {
+		$suffix = ':' . $suffix;
+	} else {
+		$suffix = '.';
+	}
+	closedie $_[0] . $suffix . "\n";
+}
+
+# ######################################################################
+__END__
+
+=head1 NAME
+
+sieve_connect -- simple sieve command-line client
+
+=head1 SYNOPSIS
+
+ sieve_connect [--localsieve <script>] [--remotesieve <script>]
+	       [--debug]
+               [--server <hostname>] [--port <portspec>] [--4|--6]
+	       [--user <authentication_id>] [--authzid <authzid>]
+	       [--authmech <mechanism>]
+	       [--upload|--download|--list|--delete|
+	        --activate|--deactivate]
+	       [--help|--man]
+
+=head1 DESCRIPTION
+
+B<sieve_connect> is a simple timsieved protocol client for scriptable
+interaction with timsieved, as distributed with the Cyrus IMAP server.
+
+The remote sieve script name defaults to the same as the local sieve
+script name, so just specify the local one if only one is needed; it
+was a deliberate decision to have the defaults this way around, to make
+people think about names in the local filesystem.  There is no default
+script name.
+
+The C<--debug> option turns on diagnostic traces.
+
+The server can be a host or IP address, IPv4 or IPv6, default is C<localhost>.
+The port can be any Perl port specification, default is C<sieve(2000)>.
+The C<--4> or C<--6> options may be used to coerce IPv4 or IPv6.
+
+The C<--user> option will be required unless you're on a Unix system
+with getpwuid() available and your Cyrus account name matches your system
+account name.  C<--authmech> can be used to force a particular authenticaiton
+mechanism.  C<--authzid> can be used to request authorisation to act as
+the specified id.
+
+The remaining options denote actions.  One, and only one, action must be
+present.  This is a simple client, so is not scriptable beyond
+single-action.  It is believed that the names of these actions are
+sufficiently self-descriptive for any English-speaker who can safely be
+allowed unaccompanied computer usage.
+
+=head1 BUGS
+
+Not fully portable to Win32 because C<getpwuid()> is used to provide a
+default usercode.
+
+If the authentication protocol negotiates a protection layer then things
+will rapidly Go Bad.  A mitigating factor is that no protection layer
+should be negotiated whilst under STARTTLS protection.  Just use TLS!
+
+=head1 HISTORY
+
+B<sieve_connect> was written as a demonstration for the C<info-cyrus>
+mailing-list, 2006-11-14.
+
+=head1 AUTHOR
+
+Phil Pennock is guilty, m'Lud.
+
+=head1 PREREQUISITES
+
+Perl.  C<Authen::SASL>.  C<IO::Socket::INET6>.
+C<IO::Socket::SSL> (at least version 0.97).  C<Pod::Usage>.
+C<Term::ReadKey> to get passwords without echo.
+Various other Perl modules which are believed to be standard.
+
+=cut
+
+timsieved lex.c shows commands are:
+
+    switch (*str) {
+    case 'a':
+        if (strcmp(str, "authenticate")==0) return AUTHENTICATE;
+        break;
+
+    case 'c':
+        if (strcmp(str, "capability")==0) return CAPABILITY;
+        break;
+
+    case 'd':
+        if (strcmp(str, "deletescript")==0) return DELETESCRIPT;
+        break;
+
+    case 'g':
+        if (strcmp(str, "getscript")==0) return GETSCRIPT;
+        break;
+    case 'h':
+        if (strcmp(str, "havespace")==0) return HAVESPACE;
+        break;
+
+    case 'l':
+        if (strcmp(str, "listscripts")==0) return LISTSCRIPTS;
+        if (strcmp(str, "logout")==0) return LOGOUT;
+        break;
+
+    case 'p':
+        if (strcmp(str, "putscript")==0) return PUTSCRIPT;
+        break;
+
+    case 's':
+        if (strcmp(str, "setactive")==0) return SETACTIVE;
+        if (strcmp(str, "starttls")==0 && tls_enabled())
+            return STARTTLS;
+        break;
+
