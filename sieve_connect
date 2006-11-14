@@ -149,10 +149,6 @@ sub parse_capabilities
 }
 parse_capabilities $sock;
 
-#foreach my $k (sort keys %raw_capabilities) {
-#	print "Capability $k\n\t$raw_capabilities{$k}\n";
-#}
-
 if (exists $capa{STARTTLS}) {
 	ssend $sock, "STARTTLS";
 	sget $sock;
@@ -163,9 +159,6 @@ if (exists $capa{STARTTLS}) {
 	};
 	ssend $sock, "CAPABILITY";
 	parse_capabilities $sock;
-#	foreach my $k (sort keys %raw_capabilities) {
-#		print "Capability $k\n\t$raw_capabilities{$k}\n";
-#	}
 }
 
 my %authen_sasl_params;
@@ -175,22 +168,22 @@ if (defined $authzid) {
 }
 $authen_sasl_params{callback}{pass} = sub {
 	ReadMode('noecho');
-	{ print "Sieve/IMAP Password: "; $| = 1; }
+	{ print STDERR "Sieve/IMAP Password: "; $| = 1; }
 	my $password = ReadLine(0);
 	ReadMode('normal');
-	print "\n";
+	print STDERR "\n";
 	chomp $password if defined $password;
 	return $password;
 };
 
-closedie $sock, "Do not have an authentication mechanism list\n"
+closedie($sock, "Do not have an authentication mechanism list\n")
 	unless ref($capa{SASL}) eq 'ARRAY';
 if (defined $authmech) {
 	$authmech = uc $authmech;
 	if (grep {$_ eq $authmech} map {uc $_} @{$capa{SASL}}) {
 		debug "auth: will try requested SASL mechanism $authmech";
 	} else {
-		closedie $sock, "Server does not offer SASL mechanism $authmech\n";
+		closedie($sock, "Server does not offer SASL mechanism $authmech\n");
 	}
 	$authen_sasl_params{mechanism} = $authmech;
 } else {
@@ -201,7 +194,7 @@ my $sasl = Authen::SASL->new(%authen_sasl_params);
 die "SASL object init failed (local problem): $!\n"
 	unless defined $sasl;
 
-my $authconversation = $sasl->client_new('sieve', $server)
+my $authconversation = $sasl->client_new('sieve', $server, '')
 	or die "SASL conversation init failed (local problem): $!\n";
 {
 	my $sasl_m = $authconversation->mechanism()
@@ -229,7 +222,7 @@ my $authconversation = $sasl->client_new('sieve', $server)
 	}
 	sget $sock;
 
-	while ($_ !~ /^(OK|NO)(?:\s.*)$/) {
+	while ($_ !~ /^(OK|NO)(?:\s.*)?$/) {
 		unless (/^{(\d+)}$/) {
 			sfinish $sock, "*";
 			die $sock, "Failure to parse server SASL response.\n";
@@ -247,14 +240,26 @@ my $authconversation = $sasl->client_new('sieve', $server)
 		$response = '' unless defined $response; # sigh
 		my $senddata = encode_base64($response, '');
 		my $sendlen = length $senddata;
-		my $sendsuffix = $sendlen > 0 ? '+' : '';
-		ssend $sock, "{$sendlen$sendsuffix}";
-		ssend $sock, $senddata if $sendlen > 0;
+		ssend $sock, "{$sendlen+}";
+		# okay, we send a blank line here even for 0 length data
+		ssend $sock, $senddata;
 		sget $sock;
 	}
 
 	if (/^NO((?:\s.*)?)$/) {
-		closedie_NOmsg $sock, $1, "Authentication refused by server";
+		closedie_NOmsg($sock, $1, "Authentication refused by server");
+	}
+	if (/^OK\s+\(SASL\s+\"([^"]+)\"\)$/) {
+		# This _should_ be present with server-verification steps which
+		# in other profiles expect an empty response.  But Authen::SASL
+		# doesn't let us confirm that we've finished authentication!
+		# The assumption seems to be that the server only verifies us
+		# so if it says "okay", we don't keep trying.
+		my $final_auth = decode_base64($1);
+		my $valid = $authconversation->client_step($final_auth);
+		if (defined $valid and length $valid) {
+			closedie($sock, "Server failed final verification");
+		}
 	}
 
 }
@@ -298,24 +303,26 @@ if ($action eq 'delete') {
 }
 
 if ($action eq 'download') {
-	closedie $sock, "No local sieve name?\n" unless defined $localsievename;
-	closedie $sock, "No remote sieve name?\n" unless defined $remotesievename;
+	closedie($sock, "No local sieve name?\n")
+		unless defined $localsievename;
+	closedie($sock, "No remote sieve name?\n")
+		unless defined $remotesievename;
 	ssend $sock, qq{GETSCRIPT "$remotesievename"};
 	sget $sock;
 	if (/^NO((?:\s.*)?)$/) {
-		closedie_NOmsg $sock, $1, "Script not returned by server";
+		closedie_NOmsg($sock, $1, "Script not returned by server");
 	}
 	if (/^OK((?:\s.*)?)$/) {
 		warn "Empty script?\n";
 		sfinish $sock; exit 0;
 	}
 	unless (/^{(\d+)}$/) {
-		closedie $sock, "Failed to parse server response to GETSCRIPT";
+		closedie($sock, "Failed to parse server response to GETSCRIPT");
 	}
 	my $fh;
 	unless ($localsievename eq '-') {
 		$fh = new IO::File $localsievename, '>'
-			or closedie $sock, "write-open($localsievename) failed: $!\n";
+			or closedie($sock, "write-open($localsievename) failed: $!\n");
 		select $fh;
 	}
 	my $len = $1;
@@ -327,21 +334,24 @@ if ($action eq 'download') {
 	sget $sock;
 	if (defined $fh) {
 		$fh->close()
-		 or closedie $sock, "write-close($localsievename) failed: $!\n";
+		 or closedie($sock, "write-close($localsievename) failed: $!\n");
 	}
 	sfinish $sock; exit 0;
 }
 
 if ($action eq 'upload') {
-	closedie $sock, "No local sieve name?\n" unless defined $localsievename;
-	closedie $sock, "No remote sieve name?\n" unless defined $remotesievename;
+	closedie($sock, "No local sieve name?\n")
+		unless defined $localsievename;
+	closedie($sock, "No remote sieve name?\n")
+		unless defined $remotesievename;
 	# I'm going to assume that any Sieve script will easily fit in memory.
 	# Since Cyrus enforces admin-specified size constraints, this is
 	# probably pretty safe.
 	my $fh = new IO::File $localsievename, '<'
-		or closedie $sock, "aborting, read-open($localsievename) failed: $!\n";
+		or closedie($sock, "aborting, read-open($localsievename) failed: $!\n");
 	my @scriptlines = $fh->getlines();
-	$fh->close() or closedie $sock, "aborting, read-close($localsievename failed: $!\n";
+	$fh->close()
+		or closedie($sock, "aborting, read-close($localsievename failed: $!\n");
 
 	my $len = 0;
 	$len += length($_) foreach @scriptlines;
@@ -361,7 +371,7 @@ if ($action eq 'upload') {
 
 print "We're in, but with nothing to do ... goodbye.\n";
 sfinish $sock;
-exit 0;
+exit 1;
 
 # ######################################################################
 # minor routines
@@ -385,6 +395,9 @@ sub ssend
 	}
 	foreach my $l (@_) {
 		$sock->print("$l$eol");
+# yes, the debug output can have extra blank lines if supplied -noeol because
+# they're already present.  Rather than mess around to tidy it up, I'm leaving
+# it because it's debug output, not UI or protocol text.
 		sent $l;
 	}
 }
@@ -420,7 +433,7 @@ sub closedie
 {
 	my $sock = shift;
 	my $e = $!;
-	sfinish $sock;
+	sfinish($sock);
 	$! = $e;
 	die @_;
 }
@@ -434,7 +447,7 @@ sub closedie_NOmsg
 	} else {
 		$suffix = '.';
 	}
-	closedie $_[0] . $suffix . "\n";
+	closedie($sock, $_[0] . $suffix . "\n");
 }
 
 # ######################################################################
@@ -510,41 +523,3 @@ C<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
 
 =cut
-
-timsieved lex.c shows commands are:
-
-    switch (*str) {
-    case 'a':
-        if (strcmp(str, "authenticate")==0) return AUTHENTICATE;
-        break;
-
-    case 'c':
-        if (strcmp(str, "capability")==0) return CAPABILITY;
-        break;
-
-    case 'd':
-        if (strcmp(str, "deletescript")==0) return DELETESCRIPT;
-        break;
-
-    case 'g':
-        if (strcmp(str, "getscript")==0) return GETSCRIPT;
-        break;
-    case 'h':
-        if (strcmp(str, "havespace")==0) return HAVESPACE;
-        break;
-
-    case 'l':
-        if (strcmp(str, "listscripts")==0) return LISTSCRIPTS;
-        if (strcmp(str, "logout")==0) return LOGOUT;
-        break;
-
-    case 'p':
-        if (strcmp(str, "putscript")==0) return PUTSCRIPT;
-        break;
-
-    case 's':
-        if (strcmp(str, "setactive")==0) return SETACTIVE;
-        if (strcmp(str, "starttls")==0 && tls_enabled())
-            return STARTTLS;
-        break;
-
