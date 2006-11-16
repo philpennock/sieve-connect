@@ -42,7 +42,7 @@ sub closedie_NOmsg;
 my $DEBUGGING = 0;
 my $localsievename;
 my $remotesievename;
-my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile);
+my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
 my $server = 'localhost';
 my $port = 'sieve(2000)';
@@ -56,6 +56,7 @@ GetOptions(
 	"user=s"	=> \$user,
 	"authzid=s"	=> \$authzid,
 	"authmech=s"	=> \$authmech,
+	"passwordfd=n"	=> \$passwordfd,
 	"clientkey=s"	=> \$sslkeyfile,
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
@@ -205,7 +206,7 @@ $authen_sasl_params{callback}{user} = $user;
 if (defined $authzid) {
 	$authen_sasl_params{callback}{authname} = $authzid;
 }
-$authen_sasl_params{callback}{pass} = sub {
+my $prompt_for_password = sub {
 	ReadMode('noecho');
 	{ print STDERR "Sieve/IMAP Password: "; $| = 1; }
 	my $password = ReadLine(0);
@@ -214,6 +215,16 @@ $authen_sasl_params{callback}{pass} = sub {
 	chomp $password if defined $password;
 	return $password;
 };
+if (defined $passwordfd) {
+	open(PASSHANDLE, "<&=", $passwordfd)
+		or die "Unable to open fd $passwordfd for reading: $!\n";
+	my @data = <PASSHANDLE>;
+	close(PASSHANDLE);
+	chomp $data[-1];
+	$authen_sasl_params{callback}{pass} = join '', @data;
+} else {
+	$authen_sasl_params{callback}{pass} = $prompt_for_password;
+}
 
 closedie($sock, "Do not have an authentication mechanism list\n")
 	unless ref($capa{SASL}) eq 'ARRAY';
@@ -511,6 +522,7 @@ sieve_connect -- simple sieve command-line client
 	       [--debug]
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
+	       [--passwordfd <n>]
 	       [--clientkey <file> --clientcert <file>]|
 	        [--clientkeycert <file>]
 	       [--authmech <mechanism>]
@@ -539,7 +551,11 @@ The C<--user> option will be required unless you're on a Unix system
 with getpwuid() available and your Cyrus account name matches your system
 account name.  C<--authmech> can be used to force a particular authenticaiton
 mechanism.  C<--authzid> can be used to request authorisation to act as
-the specified id.
+the specified id.  If you want to provide a password programmatically,
+use --passwordfd to state which file descriptor (typically C<0>) the password
+can be read from.  Everything until the newline before EOF is the password,
+so it can contain embedded newlines.  Do not provide passwords on a
+command-line or in a process environment.
 
 For SSL client certificate authentication, either C<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
