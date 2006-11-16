@@ -83,7 +83,7 @@ GetOptions(
 	"server|s=s"	=> \$server,
 	"port|p=s"	=> \$port, # not num, allow service names
 	"user|u=s"	=> \$user,
-	"realm=s"	=> \$realm,
+	"realm|r=s"	=> \$realm,
 	"authzid|authname|a=s"	=> \$authzid, # authname for sieveshell compat
 	"authmech|m=s"	=> \$authmech,
 	"passwordfd=n"	=> \$passwordfd,
@@ -100,7 +100,7 @@ GetOptions(
 	"delete"	=> sub { $action = 'delete' },
 	"activate"	=> sub { $action = 'activate' },
 	"deactivate"	=> sub { $action = 'deactivate' },
-	"exec=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
+	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
 ) or pod2usage(2);
