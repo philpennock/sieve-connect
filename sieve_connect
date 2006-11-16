@@ -907,7 +907,8 @@ sieve_connect -- simple sieve command-line client
 =head1 SYNOPSIS
 
  sieve_connect [-s <hostname>] [-p <portspec>] [-u <user>] [a <authzid>]
-               [-m <authmech>] [ ... longopts ...]
+               [-m <authmech>] [-r realm] [-e execscript]
+	       [... longopts ...]
  sieve_connect [--localsieve <script>] [--remotesieve <script>]
 	       [--debug]
                [--server <hostname>] [--port <portspec>] [--4|--6]
