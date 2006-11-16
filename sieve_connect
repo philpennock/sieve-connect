@@ -3,7 +3,32 @@
 # $HeadURL$
 # $Id$
 #
-# timesieved client script
+# timsieved client script
+#
+# Copyright ©2006 Phil Pennock.  All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+# 3. The name of the author may not be used to endorse or promote products
+#    derived from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+# OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+# IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+# INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
 #
 
 use warnings;
@@ -29,6 +54,7 @@ use IO::Socket::SSL 0.97; # SSL_ca_path bogus before 0.97
 use MIME::Base64;
 use Pod::Usage;
 use Term::ReadKey;
+# interactive mode will attempt to pull in Term::ReadLine too.
 
 sub debug;
 sub sent;
@@ -38,24 +64,28 @@ sub sfinish;
 sub received;
 sub closedie;
 sub closedie_NOmsg;
+sub die_NOmsg;
 
 my $DEBUGGING = 0;
+my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
-my $server = 'localhost';
+my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
-my $action = 'noop';
+my $action = 'command-loop';
+my $execscript;
 GetOptions(
 	"localsieve=s"	=> \$localsievename,
 	"remotesieve=s"	=> \$remotesievename,
-	"server=s"	=> \$server,
-	"port=s"	=> \$port, # not num, allow service names
-	"user=s"	=> \$user,
-	"authzid=s"	=> \$authzid,
-	"authmech=s"	=> \$authmech,
+	"server|s=s"	=> \$server,
+	"port|p=s"	=> \$port, # not num, allow service names
+	"user|u=s"	=> \$user,
+	"realm=s"	=> \$realm,
+	"authzid|authname|a=s"	=> \$authzid, # authname for sieveshell compat
+	"authmech|m=s"	=> \$authmech,
 	"passwordfd=n"	=> \$passwordfd,
 	"clientkey=s"	=> \$sslkeyfile,
 	"clientcert=s"	=> \$sslcertfile,
@@ -70,12 +100,26 @@ GetOptions(
 	"delete"	=> sub { $action = 'delete' },
 	"activate"	=> sub { $action = 'activate' },
 	"deactivate"	=> sub { $action = 'deactivate' },
+	"exec=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
 ) or pod2usage(2);
 # We don't implement HAVESPACE <script> <size>
 
-pod2usage(2) if $action eq 'noop';
+if (defined $ARGV[0] and not defined $server) {
+	# sieveshell compatibility.
+	my $where = $ARGV[0];
+	if ($where =~ m!^\[([^]]+)\]:(.+)\z!) {
+		$server = $1; $port = $2;
+	} elsif ($where =~ m!^\[([^]]+)\]\z!) {
+		$server = $1;
+	} elsif ($where =~ m!^(.+):([^:]+)\z!) {
+		$server = $1; $port = $2;
+	} else {
+		$server = $where;
+	}
+}
+$server = 'localhost' unless defined $server;
 
 die "Bad server name\n"
 	unless $server =~ /^[A-Za-z0-9_.-]+\z/;
@@ -83,7 +127,22 @@ die "Bad port specification\n"
 	unless $port =~ /^[A-Za-z0-9_()-]+\z/;
 
 unless (defined $user) {
-	$user = getpwuid $>; # FIXME: will break Win32
+	if ($^O eq "MSWin32") {
+		# perlvar documents always "MSWin32" on Windows ...
+		# what about 64bit windows?
+		if (exists $ENV{USERNAME} and length $ENV{USERNAME}) {
+			$user = $ENV{USERNAME};
+		} elsif (exists $ENV{LOGNAME} and length $ENV{LOGNAME}) {
+			$user = $ENV{LOGNAME};
+		} else {
+			die "Unable to figure out a default user, sorry.\n";
+		}
+	} else {
+		$user = getpwuid $>;
+	}
+	# this should handle the non-mswin32 case if 64bit _is_ different.
+	die "Unable to figure out a default user, sorry!\n"
+		unless defined $user;
 }
 
 if ((defined $sslkeyfile and not defined $sslcertfile) or
@@ -206,6 +265,10 @@ $authen_sasl_params{callback}{user} = $user;
 if (defined $authzid) {
 	$authen_sasl_params{callback}{authname} = $authzid;
 }
+if (defined $realm) {
+	# for compatibility, we set it as a callback AND as a property (below)
+	$authen_sasl_params{callback}{realm} = $realm;
+}
 my $prompt_for_password = sub {
 	ReadMode('noecho');
 	{ print STDERR "Sieve/IMAP Password: "; $| = 1; }
@@ -246,6 +309,9 @@ die "SASL object init failed (local problem): $!\n"
 
 my $authconversation = $sasl->client_new('sieve', $server, '')
 	or die "SASL conversation init failed (local problem): $!\n";
+if (defined $realm) {
+	$authconversation->property(realm => $realm);
+}
 {
 	my $sasl_m = $authconversation->mechanism()
 		or die "Oh why can't I decide which auth mech to send?\n";
@@ -309,12 +375,260 @@ my $authconversation = $sasl->client_new('sieve', $server, '')
 }
 
 # ######################################################################
-# We're in, do the requested action
+# We're in, we can do stuff.  What can we do?
 
-# Ugly poor-man's switch.  This isn't supposed to be part of a more extensible
-# whole.
+sub sieve_list;
+sub sieve_deactivate;
+sub sieve_activate;
+sub sieve_delete;
+sub sieve_download;
+sub sieve_upload;
+sub aux_quit;
+sub aux_help;
+sub aux_man;
+;# vim-fix: end of subs
 
-if ($action eq 'list') {
+# 'routine' => sub ref
+# 'help' => help text
+# 'action' => command-line --action
+# 'alias' => extra name
+# 'params' => count of parameters needed
+# 'params_max' => if more parameters are _allowed_ than 'params'
+#                 (last param is repeated if not this many)
+# param list numbering: 1=first param, ...
+# 'remote_name' => if there's a remote name, which position it comes
+# 'local_name' => if there's a local name, which position it comes
+my %sieve_commands = (
+	help	=> { routine => \&aux_help, params => 0, help => 'this help' },
+	'?'	=> { alias => 'help' },
+	man	=> { routine => \&aux_man, params => 0, help => 'see docs' },
+	quit	=> { routine => \&aux_quit, params => 0, help => 'goodbye!' },
+	bye	=> { alias => 'quit' },
+	logout	=> { alias => 'quit' },
+	'exit'	=> { alias => 'quit' },
+	list	=> {
+		routine => \&sieve_list,
+		help => 'list the scripts currently on the server',
+		action => 1,
+		params => 0,
+	},
+	ls	=> { alias => 'list' },
+	dir	=> { alias => 'list' },
+	activate => {
+		routine => \&sieve_activate,
+		help => '<script> -- set the currently used script',
+		action => 1,
+		params => 1,
+		remote_name => 1,
+	},
+	deactivate => {
+		routine => \&sieve_deactivate,
+		help => 'turn off sieve processing',
+		action => 1,
+		params => 0,
+	},
+	'delete' => {
+		routine => \&sieve_delete,
+		help => '<script> -- remove the script from the server',
+		action => 1,
+		params => 1,
+		remote_name => 1,
+	},
+	rm	=> { alias => 'delete' },
+	upload	=> {
+		routine => \&sieve_upload,
+		help => '<filename> [<scriptname>] -- put script on server',
+		action => 1,
+		params => 1,
+		params_max => 2,
+		local_name => 1,
+		remote_name => 2,
+	},
+	put	=> { alias => 'upload' },
+	download => {
+		routine => \&sieve_download,
+		help => '<script> [<filename>] -- retrieve script from server',
+		action => 1,
+		params => 1,
+		params_max => 2,
+		remote_name => 1,
+		local_name => 2,
+	},
+	get	=> { alias => 'download' },
+	view	=> {
+		routine => sub { sieve_download($_[0],$_[1],'-') },
+		help => '<script> -- show contents of script',
+		params => 1,
+		remote_name => 1,
+	},
+	page	=> { alias => 'view' },
+	more	=> { alias => 'view' },
+	show	=> { alias => 'view' },
+);
+
+# ######################################################################
+# Do something
+
+# Handle the case where everything is on the command-line.  No aliases
+# apply, since GetOptions() sets $action for us.
+# 
+if ($action ne 'command-loop' and exists $sieve_commands{$action}{action}) {
+	closedie $sock, "internal error, no routine for \'$action\'"
+		unless exists $sieve_commands{$action}{routine};
+	my @params;
+	my $todo = $sieve_commands{$action};
+	if (exists $todo->{local_name}) {
+		closedie $sock, "Need a local sieve name\n"
+			unless defined $localsievename;
+		$params[$todo->{local_name}-1] = $localsievename;
+	}
+	if (exists $todo->{remote_name}) {
+		closedie $sock, "Need a remote sieve name\n"
+			unless defined $remotesievename;
+		$params[$todo->{remote_name}-1] = $remotesievename;
+	}
+	$@ = '';
+	eval { $todo->{routine}->($sock, @params) };
+	my $saveddie = $@;
+	sfinish $sock;
+	if ($saveddie) {
+		$saveddie =~ s/^QUIT:\n?//;
+		die $saveddie if length $saveddie;
+	}
+	exit 0;
+}
+
+if ($action ne 'command-loop') {
+	closedie $sock, "Internal error, don't recognise action \'$action\'";
+}
+
+# How to get commands, how to finish up.
+my ($cmdlineget_func, $cmdlinedone_func);
+my $report_lineno = 0;
+
+if (defined $execscript) {
+	$report_lineno = 1;
+	my $scripth = new IO::File $execscript, '<'
+		or closedie $sock, "Unable to read-open($execscript): $!\n";
+	$cmdlineget_func = sub { return $scripth->getline() };
+	$cmdlinedone_func = sub { $scripth->close() };
+
+} else {
+	use Term::ReadLine;
+	my $term = new Term::ReadLine 'sieve_connect';
+	closedie $sock, "No terminal initialisation" unless defined $term;
+	$term->ornaments(0);
+	$cmdlineget_func = sub { return $term->readline('> ') };
+	print STDERR "ReadLine support enabled.\n";
+}
+
+my $exitval = 0;
+my $lineno = 0;
+
+while (defined (my $cmdline = $cmdlineget_func->())) {
+	chomp $cmdline; $cmdline =~ s/^\s+//; $cmdline =~ s/\s+\z//;
+	next unless length $cmdline;
+	++$lineno;
+	my $diag_prefix = "";
+	if ($report_lineno) {
+		$diag_prefix = "Line $lineno: ";
+	}
+
+	my @params;
+	my ($cmd, $rest) = split /\s+/, $cmdline, 2;
+	$cmd = lc $cmd;
+	while (defined $rest and length $rest) {
+		$rest =~ s/^\s+//;
+		if ($rest =~ s/^"([^"]+)"\s*//) {
+			push @params, $1;
+			next;
+		}
+		if ($rest =~ s/(\S+)\s*//) {
+			push @params, $1;
+			next;
+		}
+		next unless length $rest;
+		warn "${diag_prefix}Unable to parse rest of $cmd\n" .
+			"Had {$cmdline}\nLeft {$rest}\n";
+	}
+
+	unless (exists $sieve_commands{$cmd}) {
+		my @candidates = grep /^\Q$cmd\E/, keys %sieve_commands;
+		if (@candidates == 0) {
+			warn "${diag_prefix}Unknown command: $cmd\n";
+			next;
+		} elsif (@candidates > 1) {
+			@candidates = sort @candidates;
+			warn "${diag_prefix}Which command?\n" .
+				"That matches: @candidates\n";
+			next;
+		}
+		$cmd = $candidates[0];
+	}
+
+	if (exists $sieve_commands{$cmd}{alias}) {
+		$cmd = $sieve_commands{$cmd}{alias};
+	}
+
+	my $minp = $sieve_commands{$cmd}{params};
+	my $maxp = exists $sieve_commands{$cmd}{params_max} ?
+			$sieve_commands{$cmd}{params_max} : $minp;
+	if ($maxp < $minp) {
+		# don't die, we're not inside an eval{} so last is cleanest.
+		warn "${diag_prefix}Internal configuration error, cmd $cmd max < min\n";
+		last;
+	}
+	my $needtext;
+	if ($minp == $maxp) {
+		$needtext = "$minp parameters";
+		$needtext =~ s/s\z// if $minp == 1;
+		# I don't care about plurality and think encoding English rules
+		# is unwise as people understand what's meant, but I don't
+		# want bug reports about it.
+	} else {
+		$needtext = "at least $minp, at most $maxp, parameters";
+	}
+
+	if (@params < $minp or @params > $maxp) {
+		warn "${diag_prefix}$cmd needs $needtext\n";
+		next;
+	}
+	if (@params != $maxp) {
+		my $repeat = $params[-1];
+		for (my $i = $#params+1; $i <= $maxp; ++$i) {
+			$params[$i] = $repeat;
+		}
+	}
+
+	debug "Doing: $cmd @params";
+	eval { $sieve_commands{$cmd}{routine}->($sock, @params) };
+	if ($@ and $@ =~ /^QUIT:/) {
+		(my $emsg = $@) =~ s/^QUIT:\n?//;
+		if (length $emsg) {
+			$exitval = 3;
+			warn $emsg;
+		}
+		last;
+	} elsif ($@) {
+		warn $@;
+	}
+}
+
+$cmdlinedone_func->() if defined $cmdlinedone_func;
+
+sfinish $sock;
+exit $exitval;
+
+# ######################################################################
+# The sieve commands.
+
+# These may die, in which case it will be caught.
+# They may not close the socket.
+# If the die message starts QUIT: then a command-loop will abort too.
+
+sub sieve_list
+{
+	my $sock = shift;
 	ssend $sock, "LISTSCRIPTS";
 	sget $sock;
 	# These can also be literals, not quoted.  So this technically needs
@@ -324,97 +638,159 @@ if ($action eq 'list') {
 		print "$_\n";
 		sget $sock;
 	}
-	sfinish $sock; exit 0;
 }
 
-if ($action eq 'deactivate') {
-	$remotesievename = "";
-	$action = 'activate';
+sub sieve_deactivate
+{
+	my $sock = shift;
+	sieve_activate($sock, "");
 }
-if ($action eq 'activate') {
-	ssend $sock, "SETACTIVE \"$remotesievename\"";
+
+sub sieve_activate
+{
+	my $sock = shift;
+	my $scriptname = shift;
+	ssend $sock, "SETACTIVE \"$scriptname\"";
 	sget $sock;
 	unless (/^OK((?:\s.*)?)$/) {
-		warn "SETACTIVE($remotesievename) failed: $_\n";
+		warn "SETACTIVE($scriptname) failed: $_\n";
 	}
-	sfinish $sock; exit 0;
 }
 
-if ($action eq 'delete') {
-	ssend $sock, "DELETESCRIPT \"$remotesievename\"";
+sub sieve_delete
+{
+	my $sock = shift;
+	my $delname = shift;
+	ssend $sock, "DELETESCRIPT \"$delname\"";
 	sget $sock;
 	unless (/^OK((?:\s.*)?)$/) {
-		warn "DELETESCRIPT($remotesievename) failed: $_\n";
+		warn "DELETESCRIPT($delname) failed: $_\n";
 	}
-	sfinish $sock; exit 0;
 }
 
-if ($action eq 'download') {
-	closedie($sock, "No local sieve name?\n")
-		unless defined $localsievename;
-	closedie($sock, "No remote sieve name?\n")
-		unless defined $remotesievename;
-	ssend $sock, qq{GETSCRIPT "$remotesievename"};
+sub sieve_download
+{
+	my ($sock, $remotefn, $localfn) = @_; splice @_, 0, 3;
+	die "QUIT:Internal error, download missing remotefn\n"
+		unless defined $remotefn;
+	die "QUIT:Internal error, download missing localfn\n"
+		unless defined $localfn;
+
+	ssend $sock, qq{GETSCRIPT "$remotefn"};
 	sget $sock;
 	if (/^NO((?:\s.*)?)$/) {
-		closedie_NOmsg($sock, $1, "Script not returned by server");
+		die_NOmsg($1, qq{Script "$remotefn" not returned by server});
 	}
 	if (/^OK((?:\s.*)?)$/) {
-		warn "Empty script?\n";
-		sfinish $sock; exit 0;
+		warn qq{Empty script "$remotefn"?  Not saved.\n};
+		return;
 	}
 	unless (/^{(\d+)}\r?$/m) {
-		closedie($sock, "Failed to parse server response to GETSCRIPT");
+		die "QUIT:Failed to parse server response to GETSCRIPT";
+	}
+	my $contentdata = $_;
+	sget $sock;
+	while (/^$/) { sget $sock; } # extra newline but only for GETSCRIPT?
+	unless (/^OK((?:\s.*)?)$/) {
+		die_NOmsg $_, "Script retrieval not successful, not saving";
 	}
 	my $fh;
-	unless ($localsievename eq '-') {
-		$fh = new IO::File $localsievename, '>'
-			or closedie($sock, "write-open($localsievename) failed: $!\n");
-		select $fh;
+	my $oldouthandle;
+	unless ($localfn eq '-') {
+		$fh = new IO::File $localfn, '>'
+			or die "write-open($localfn) failed: $!\n";
+		$oldouthandle = select $fh;
 	}
-	s/^{\d+\+?}\r?\n?//m;
-	print $_;
-	#sget $sock;
+	$contentdata =~ s/^{\d+\+?}\r?\n?//m;
+	print $contentdata;
+	select $oldouthandle if defined $oldouthandle;
 	if (defined $fh) {
-		$fh->close()
-		 or closedie($sock, "write-close($localsievename) failed: $!\n");
+		$fh->close() or die "write-close($localfn) failed: $!\n";
 	}
-	sfinish $sock; exit 0;
 }
 
-if ($action eq 'upload') {
-	closedie($sock, "No local sieve name?\n")
-		unless defined $localsievename;
-	closedie($sock, "No remote sieve name?\n")
-		unless defined $remotesievename;
+sub sieve_upload
+{
+	my ($sock, $localfn, $remotefn) = @_; splice @_, 0, 3;
+	die "QUIT:Internal error, upload missing remotefn\n"
+		unless defined $remotefn;
+	die "QUIT:Internal error, upload missing localfn\n"
+		unless defined $localfn;
+
 	# I'm going to assume that any Sieve script will easily fit in memory.
 	# Since Cyrus enforces admin-specified size constraints, this is
 	# probably pretty safe.
-	my $fh = new IO::File $localsievename, '<'
-		or closedie($sock, "aborting, read-open($localsievename) failed: $!\n");
+	my $fh = new IO::File $localfn, '<'
+		or die "aborting, read-open($localfn) failed: $!\n";
 	my @scriptlines = $fh->getlines();
-	$fh->close()
-		or closedie($sock, "aborting, read-close($localsievename failed: $!\n");
+	$fh->close() or die "aborting, read-close($localfn failed: $!\n";
 
 	my $len = 0;
 	$len += length($_) foreach @scriptlines;
 
-	ssend $sock, "PUTSCRIPT \"$remotesievename\" {${len}+}";
+	ssend $sock, "PUTSCRIPT \"$remotefn\" {${len}+}";
 	ssend $sock, '-noeol', @scriptlines;
 	ssend $sock, '';
 	sget $sock;
 
 	unless (/^OK((?:\s.*)?)$/) {
-		warn "PUTSCRIPT($remotesievename) failed: $_\n";
+		warn "PUTSCRIPT($remotefn) failed: $_\n";
 	}
-
-	sfinish $sock; exit 0;
 }
 
+sub aux_quit
+{
+	die "QUIT:\n"
+}
 
-print "We're in, but with nothing to do ... goodbye.\n";
-sfinish $sock;
-exit 1;
+sub aux_help
+{
+	my %aliases;
+	my @commands;
+	foreach (keys %sieve_commands) {
+		if (exists $sieve_commands{$_}{routine}) {
+			push @commands, $_;
+		} elsif (exists $sieve_commands{$_}{alias}) {
+			my $al = $sieve_commands{$_}{alias};
+			$aliases{$al} = [] unless exists $aliases{$al};
+			push @{$aliases{$al}}, $_;
+		} else {
+			debug "HELP what is item \'$_\'";
+		}
+	}
+	# alignment, with ....
+	my $maxlen = 0;
+	foreach my $c (@commands) {
+		my $l = length $c;
+		$maxlen = $l if $l > $maxlen;
+	}
+	$maxlen += 4;
+	my $indentspace = ' ' x $maxlen;
+	$maxlen -= 2;
+
+	foreach my $c (sort @commands) {
+		print $c;
+		if (exists $sieve_commands{$c}{help}) {
+			print(' ', '.' x ($maxlen - length $c), ' ');
+			print $sieve_commands{$c}{help};
+		}
+		print "\n";
+		if (exists $aliases{$c}) {
+			print $indentspace, 'aka: ',
+				join(' ', @{$aliases{$c}}), "\n";
+		}
+	}
+}
+
+sub aux_man
+{
+	use Pod::Text;
+	seek DATA, $DATASTART, 0;
+	my $parser = Pod::Text->new();
+	$parser->no_whining(1);
+	$parser->output_fh(*STDOUT);
+	$parser->parse_file(*DATA);
+}
 
 # ######################################################################
 # minor routines
@@ -509,6 +885,18 @@ sub closedie_NOmsg
 	closedie($sock, $_[0] . $suffix . "\n");
 }
 
+sub die_NOmsg
+{
+	my $suffix = shift;
+	my $msg = shift;
+	if (length $suffix) {
+		$msg .= ':' . $suffix . "\n";
+	} else {
+		$msg .= ".\n";
+	}
+	die $msg;
+}
+
 # ######################################################################
 __END__
 
@@ -518,16 +906,18 @@ sieve_connect -- simple sieve command-line client
 
 =head1 SYNOPSIS
 
+ sieve_connect [-s <hostname>] [-p <portspec>] [-u <user>] [a <authzid>]
+               [-m <authmech>] [ ... longopts ...]
  sieve_connect [--localsieve <script>] [--remotesieve <script>]
 	       [--debug]
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
-	       [--passwordfd <n>]
+	       [--realm <realm>] [--passwordfd <n>]
 	       [--clientkey <file> --clientcert <file>]|
 	        [--clientkeycert <file>]
 	       [--authmech <mechanism>]
 	       [--upload|--download|--list|--delete|
-	        --activate|--deactivate]
+	        --activate|--deactivate]|[--exec <script>]
 	       [--help|--man]
 
 =head1 DESCRIPTION
@@ -541,32 +931,42 @@ was a deliberate decision to have the defaults this way around, to make
 people think about names in the local filesystem.  There is no default
 script name.
 
-The C<--debug> option turns on diagnostic traces.
+The B<--debug> option turns on diagnostic traces.
 
-The server can be a host or IP address, IPv4 or IPv6, default is C<localhost>.
-The port can be any Perl port specification, default is C<sieve(2000)>.
-The C<--4> or C<--6> options may be used to coerce IPv4 or IPv6.
+The server can be a host or IP address, IPv4 or IPv6, default is F<localhost>.
+The port can be any Perl port specification, default is F<sieve(2000)>.
+The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
-The C<--user> option will be required unless you're on a Unix system
+The B<--user> option will be required unless you're on a Unix system
 with getpwuid() available and your Cyrus account name matches your system
-account name.  C<--authmech> can be used to force a particular authenticaiton
-mechanism.  C<--authzid> can be used to request authorisation to act as
-the specified id.  If you want to provide a password programmatically,
-use --passwordfd to state which file descriptor (typically C<0>) the password
-can be read from.  Everything until the newline before EOF is the password,
+account name.  B<--authmech> can be used to force a particular authentication
+mechanism.  B<--authzid> can be used to request authorisation to act as
+the specified id.
+B<--realm> can be used to try to pass realm information to the authentication
+mechanism.
+If you want to provide a password programmatically,
+use B<--passwordfd> to state which file descriptor (typically F<0>)
+the password can be read from.
+Everything until the newline before EOF is the password,
 so it can contain embedded newlines.  Do not provide passwords on a
 command-line or in a process environment.
 
-For SSL client certificate authentication, either C<--clientkeycert> may
+For SSL client certificate authentication, either B<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
-C<--clientkey> and C<--clientcert> should point to the relevant files.
+B<--clientkey> and B<--clientcert> should point to the relevant files.
 The data should be in PEM file-format.
 
-The remaining options denote actions.  One, and only one, action must be
-present.  This is a simple client, so is not scriptable beyond
-single-action.  It is believed that the names of these actions are
+The remaining options denote actions.  One, and only one, action may be
+present.  If no action is present, the interactive mode is entered.
+If the exec action is present, commands are read from the script
+instead.
+
+It is believed that the names of the actions are
 sufficiently self-descriptive for any English-speaker who can safely be
 allowed unaccompanied computer usage.
+
+(If B<--server> is not explicitly stated, it may be provided at the end of
+the command-line for compatibility with sieveshell.)
 
 =head1 BUGS
 
@@ -584,10 +984,16 @@ to pass to a program.  But a server could choose to use literal strings,
 even though the results are defined as line-break separated -- that would
 mean that some linebreaks are special.  Hopefully no server will do this.
 
+=head1 NON-BUGS
+
+Actually uses STARTTLS.  Can handle script names with embedded whitespace.
+
 =head1 HISTORY
 
 B<sieve_connect> was written as a demonstration for the C<info-cyrus>
-mailing-list, 2006-11-14.
+mailing-list, 2006-11-14.  It was a single-action-and-quit script for
+scripting purposes.  The command-loop code was written (two days) later
+and deliberately designed to be compatible with sieveshell.
 
 =head1 AUTHOR
 
@@ -599,5 +1005,6 @@ Perl.  C<Authen::SASL>.  C<IO::Socket::INET6>.
 C<IO::Socket::SSL> (at least version 0.97).  C<Pod::Usage>.
 C<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
+C<Term::ReadLine> will significantly improve interactive mode.
 
 =cut
