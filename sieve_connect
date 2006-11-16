@@ -983,9 +983,6 @@ the command-line for compatibility with sieveshell.)
 
 =head1 BUGS
 
-Not fully portable to Win32 because C<getpwuid()> is used to provide a
-default usercode.
-
 If the authentication protocol negotiates a protection layer then things
 will rapidly Go Bad.  A mitigating factor is that no protection layer
 should be negotiated whilst under STARTTLS protection.  Just use TLS!
