@@ -514,12 +514,24 @@ if (defined $execscript) {
 	$cmdlinedone_func = sub { $scripth->close() };
 
 } else {
-	use Term::ReadLine;
-	my $term = new Term::ReadLine 'sieve_connect';
-	closedie $sock, "No terminal initialisation" unless defined $term;
-	$term->ornaments(0);
-	$cmdlineget_func = sub { return $term->readline('> ') };
-	print STDERR "ReadLine support enabled.\n";
+	eval {
+		require Term::ReadLine;
+		import Term::ReadLine;
+		use Term::ReadLine;
+		my $term = new Term::ReadLine 'sieve_connect';
+		closedie $sock, "No terminal initialisation"
+			unless defined $term;
+		$term->ornaments(0);
+		$cmdlineget_func = sub { return $term->readline('> ') };
+		print STDERR "ReadLine support enabled.\n";
+	};
+	unless (defined $cmdlineget_func) {
+		$cmdlineget_func = sub {
+			print "> "; $| = 1;
+			my $l = <STDIN>;
+			return $l;
+		};
+	}
 }
 
 my $exitval = 0;
