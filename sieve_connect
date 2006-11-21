@@ -339,11 +339,16 @@ if (defined $realm) {
 	sget $sock;
 
 	while ($_ !~ /^(OK|NO)(?:\s.*)?$/m) {
-		unless (/^{(\d+)\+?}\r?$/m) {
-			sfinish $sock, "*";
-			die $sock, "Failure to parse server SASL response.\n";
+		my $challenge;
+		if (/^"(.*)"\r?\n?$/) {
+			$challenge = $1;
+		} else {
+			unless (/^{(\d+)\+?}\r?$/m) {
+				sfinish $sock, "*";
+				die $sock, "Failure to parse server SASL response.\n";
+			}
+			($challenge = $_) =~ s/^{\d+\+?}\r?\n?//;
 		}
-		(my $challenge = $_) =~ s/^{\d+\+?}\r?\n?//;
 		$challenge = decode_base64($challenge);
 
 		my $response = $authconversation->client_step($challenge);
