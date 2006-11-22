@@ -529,6 +529,8 @@ if (defined $execscript) {
 		$term->ornaments(0);
 		$term->Attribs->{completion_function} =
 			sub { complete_rl_sieve($term, $sock, @_) };
+		$term->Attribs->{completer_quote_characters} = '"';
+		$term->Attribs->{filename_quote_characters} = " \t";
 		$cmdlineget_func = sub { return $term->readline('> ') };
 		print STDERR "ReadLine support enabled.\n";
 	};
@@ -823,19 +825,27 @@ sub complete_rl_sieve
 		return grep /^\Q$c\E/, keys %sieve_commands;
 	}
 
+	my $rl_attribs = $term->Attribs;
+	my $quote = $rl_attribs->{completion_quote_character};
+	$quote = '' if $quote eq "\0";
+
 	my $prefix = substr($line, 0, $start);
-	my @before = split /\s+/, $prefix;
-	my $conf = $sieve_commands{lc $before[0]};
+	my @previous_words = ($prefix =~ m!((?:"[^"]+")|\S+)!g);
+
+	my $conf = $sieve_commands{lc $previous_words[0]};
 	$conf = $sieve_commands{$conf->{alias}} if exists $conf->{alias};
 	my $maxp = exists $conf->{params_max} ? $conf->{params_max} : (
 		exists $conf->{params} ? $conf->{params} : 0 );
 
 	return () unless $maxp; # no parameters allow;
 
-	my $position = scalar @before;
+	my $position = scalar @previous_words;
+	--$position if substr($line, $start-1, 1) eq $quote; # *sigh*
+
 	if (exists $conf->{remote_name}
 		and $conf->{remote_name} == $position) {
 
+		$rl_attribs->{filename_completion_desired} = 1;
 		local $_;
 		my @matches;
 		my $textmatch = qr/^\Q$text\E/;
@@ -851,7 +861,7 @@ sub complete_rl_sieve
 	} elsif (exists $conf->{local_name}
 		and $conf->{local_name} == $position) {
 
-		$term->Attribs->{filename_completion_desired} = 1;
+		$rl_attribs->{filename_completion_desired} = 1;
 		unless ($text =~ /^~/) {
 			return <$text*>;
 		}
