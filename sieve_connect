@@ -391,7 +391,8 @@ sub sieve_upload;
 sub aux_quit;
 sub aux_help;
 sub aux_man;
-;# vim-fix: end of subs
+sub complete_rl_sieve;
+sub tilde_expand ; # don't apply to cmdline params as shell does it for us
 
 # 'routine' => sub ref
 # 'help' => help text
@@ -522,11 +523,12 @@ if (defined $execscript) {
 	eval {
 		require Term::ReadLine;
 		import Term::ReadLine;
-		use Term::ReadLine;
 		my $term = new Term::ReadLine 'sieve_connect';
 		closedie $sock, "No terminal initialisation"
 			unless defined $term;
 		$term->ornaments(0);
+		$term->Attribs->{completion_function} =
+			sub { complete_rl_sieve($term, $sock, @_) };
 		$cmdlineget_func = sub { return $term->readline('> ') };
 		print STDERR "ReadLine support enabled.\n";
 	};
@@ -714,7 +716,7 @@ sub sieve_download
 	my $fh;
 	my $oldouthandle;
 	unless ($localfn eq '-') {
-		$fh = new IO::File $localfn, '>'
+		$fh = new IO::File tilde_expand($localfn), '>'
 			or die "write-open($localfn) failed: $!\n";
 		$oldouthandle = select $fh;
 	}
@@ -737,7 +739,7 @@ sub sieve_upload
 	# I'm going to assume that any Sieve script will easily fit in memory.
 	# Since Cyrus enforces admin-specified size constraints, this is
 	# probably pretty safe.
-	my $fh = new IO::File $localfn, '<'
+	my $fh = new IO::File tilde_expand($localfn), '<'
 		or die "aborting, read-open($localfn) failed: $!\n";
 	my @scriptlines = $fh->getlines();
 	$fh->close() or die "aborting, read-close($localfn failed: $!\n";
@@ -807,6 +809,69 @@ sub aux_man
 	$parser->no_whining(1);
 	$parser->output_fh(*STDOUT);
 	$parser->parse_file(*DATA);
+}
+
+# ######################################################################
+# Term::ReadLine support.
+
+sub complete_rl_sieve
+{
+	my ($term, $sock, $text, $line, $start) = @_;
+
+	if ($start == 0) {
+		my $c = lc $text;
+		return grep /^\Q$c\E/, keys %sieve_commands;
+	}
+
+	my $prefix = substr($line, 0, $start);
+	my @before = split /\s+/, $prefix;
+	my $conf = $sieve_commands{lc $before[0]};
+	$conf = $sieve_commands{$conf->{alias}} if exists $conf->{alias};
+	my $maxp = exists $conf->{params_max} ? $conf->{params_max} : (
+		exists $conf->{params} ? $conf->{params} : 0 );
+
+	return () unless $maxp; # no parameters allow;
+
+	my $position = scalar @before;
+	if (exists $conf->{remote_name}
+		and $conf->{remote_name} == $position) {
+
+		local $_;
+		my @matches;
+		my $textmatch = qr/^\Q$text\E/;
+		ssend $sock, "LISTSCRIPTS";
+		sget $sock;
+		while (/^"(.+)"[^"]*\r?\n?$/) {
+			my $c = $1;
+			push @matches, $c if $c =~ $textmatch;
+			sget $sock;
+		}
+		return @matches;
+
+	} elsif (exists $conf->{local_name}
+		and $conf->{local_name} == $position) {
+
+		$term->Attribs->{filename_completion_desired} = 1;
+		unless ($text =~ /^~/) {
+			return <$text*>;
+		}
+		if ($text =~ m!^~[^/]+\z!) {
+			setpwent;
+			my @users;
+			while (defined (my $u = getpwent)) {
+				push @users, $u if $u =~ /^\Q$user\E/;
+			}
+			map {s/^/~/} @users;
+			return @users;
+		}
+		my ($t2, $user, $home) = tilde_expand($text, 1);
+		my @completes = <$t2*>;
+		map {s/^\Q$home\E/~$user/} @completes;
+		return @completes;
+
+	} else {
+		return ();
+	}
 }
 
 # ######################################################################
@@ -912,6 +977,23 @@ sub die_NOmsg
 		$msg .= ".\n";
 	}
 	die $msg;
+}
+
+sub tilde_expand
+{
+	my $path = $_[0];
+	my $more = defined $_[1] ? $_[1] : 0;
+	return $path unless $path =~ /^~/;
+# No File::Spec because ~ is Unix-specific, AFAIK.
+
+	$path =~ m!^~([^/]*)!;
+	my $tilded = $1;
+	my $user = length $1 ? $1 : scalar getpwuid $>;
+	my $home = (getpwnam($user))[7];
+	$path =~ s{^~([^/]*)}{$home};
+# don't be context-sensitive unless asked for, as it's more useful in
+# IO::File constructors this way.
+	return ($more and wantarray) ? ($path, $tilded, $home) : $path;
 }
 
 # ######################################################################
