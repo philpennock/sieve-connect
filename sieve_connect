@@ -697,7 +697,13 @@ sub sieve_download
 	die "QUIT:Internal error, download missing localfn\n"
 		unless defined $localfn;
 
-	ssend $sock, qq{GETSCRIPT "$remotefn"};
+	my $quotedremotefn = qq{"$remotefn"};
+	if ($remotefn =~ /"/) {
+		my $l = length $remotefn;
+		$quotedremotefn = "{${l}+}\r\n$remotefn";
+	}
+
+	ssend $sock, qq{GETSCRIPT $quotedremotefn};
 	sget $sock;
 	if (/^NO((?:\s.*)?)$/) {
 		die_NOmsg($1, qq{Script "$remotefn" not returned by server});
@@ -749,7 +755,13 @@ sub sieve_upload
 	my $len = 0;
 	$len += length($_) foreach @scriptlines;
 
-	ssend $sock, "PUTSCRIPT \"$remotefn\" {${len}+}";
+	my $quotedremotefn = qq{"$remotefn"};
+	if ($remotefn =~ /"/) {
+		my $l = length $remotefn;
+		$quotedremotefn = "{${l}+}\r\n$remotefn";
+	}
+
+	ssend $sock, "PUTSCRIPT $quotedremotefn {${len}+}";
 	ssend $sock, '-noeol', @scriptlines;
 	ssend $sock, '';
 	sget $sock;
