@@ -41,11 +41,14 @@ my %ssl_options = (
 	SSL_ca_path	=> '/etc/ssl/certs',
 );
 
+my @cmd_localfs_ls = qw( ls -C );
+
 # ######################################################################
 # No user-serviceable parts below
 
 use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
 use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
+use Cwd qw();
 use Errno;
 use Getopt::Long;
 use IO::File;
@@ -389,10 +392,14 @@ sub sieve_activate;
 sub sieve_delete;
 sub sieve_download;
 sub sieve_upload;
+sub localfs_ls;
+sub localfs_chpwd;
+sub localfs_pwd;
 sub aux_quit;
 sub aux_help;
 sub aux_man;
 sub complete_rl_sieve;
+sub system_result;
 sub tilde_expand ; # don't apply to cmdline params as shell does it for us
 
 # 'routine' => sub ref
@@ -421,6 +428,28 @@ my %sieve_commands = (
 	},
 	ls	=> { alias => 'list' },
 	dir	=> { alias => 'list' },
+	lls	=> {
+		routine => \&localfs_ls,
+		help => 'local ls: look at local filesystem',
+		action => 1,
+		params => 0,
+		params_max => 1,
+		local_name => 1,
+	},
+	lcd	=> {
+		routine => \&localfs_chpwd,
+		help => 'local cd: change local working directory',
+		action => 1,
+		params => 0,
+		params_max => 1,
+		local_name => 1,
+	},
+	lpwd	=> {
+		routine =>\&localfs_pwd,
+		help => 'local pwd: show local working directory name',
+		action => 1,
+		params => 0,
+	},
 	activate => {
 		routine => \&sieve_activate,
 		help => '<script> -- set the currently used script',
@@ -615,7 +644,7 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 		warn "${diag_prefix}$cmd needs $needtext\n";
 		next;
 	}
-	if (@params != $maxp) {
+	if (@params != $maxp and @params) {
 		my $repeat = $params[-1];
 		for (my $i = $#params+1; $i <= $maxp; ++$i) {
 			$params[$i] = $repeat;
@@ -770,6 +799,36 @@ sub sieve_upload
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "PUTSCRIPT($remotefn) failed: $_\n";
 	}
+}
+
+sub localfs_ls
+{
+	my ($sock, $localdir) = @_;
+	unless (@cmd_localfs_ls) {
+		warn "Misconfiguration: no local ls command available!\n";
+		return;
+	}
+	my @cmd = @cmd_localfs_ls;
+	push @cmd, tilde_expand $localdir
+		if defined $localdir and length $localdir;
+	system @cmd;
+	return unless $?;
+	warn system_result($?, $cmd[0]);
+}
+
+sub localfs_chpwd
+{
+	my ($sock, $localdir) = @_;
+	unless (defined $localdir and length $localdir) {
+		$localdir = '~';
+	}
+	$localdir = tilde_expand $localdir;
+	chdir($localdir) or warn "chdir($localdir) failed: $!\n";
+}
+
+sub localfs_pwd
+{
+	print Cwd::cwd(), "\n";
 }
 
 sub aux_quit
@@ -1002,6 +1061,19 @@ sub die_NOmsg
 	die $msg;
 }
 
+sub system_result
+{
+	my ($ret, $cmd) = @_;
+	$cmd = 'the command' unless defined $cmd;
+	return "" unless $ret;
+	my ($ex, $sig, $core) = ($ret >> 8, $ret & 127, $ret & 128);
+	my $msg = "$cmd died";
+	$msg .= ", exiting $ex"		if $ex;
+	$msg .= ", signal $sig"		if $sig;
+	$msg .= ' (core dumped)'	if $core;
+	return "$msg\n";
+}
+
 sub tilde_expand
 {
 	my $path = $_[0];
@@ -1045,8 +1117,27 @@ sieve_connect -- simple sieve command-line client
 
 =head1 DESCRIPTION
 
-B<sieve_connect> is a simple timsieved protocol client for scriptable
-interaction with timsieved, as distributed with the Cyrus IMAP server.
+B<sieve_connect> is a client for the C<MANAGESIEVE> protocol, which is
+an Internet Draft protocol for manipulation of C<Sieve> scripts in a
+repository.
+More simply, B<sieve_connect> lets you control your mail-filtering
+rule files on a mail server.
+
+B<sieve_connect> can be invoked with an action from the command-line
+to make it easy to script one-shot actions, it can be provided with
+a script file or it can be left to enter an interactive command-loop,
+where it supports tab-completion and basic navigation of the local
+file-system in the style of C<FTP> clients.
+
+B<sieve_connect> supports the use of C<TLS> via the C<STARTTLS> command,
+including authentication via client certificates.
+C<sieve_connect> also supports whichever C<SASL> mechanisms your
+F<Authen::SASL::Perl> library provides, as long as they do not require
+SASL protection layers.
+
+In Interactive mode, a C<help> command is available.
+
+=head1 OPTIONS
 
 The remote sieve script name defaults to the same as the local sieve
 script name, so just specify the local one if only one is needed; it
@@ -1104,9 +1195,15 @@ to pass to a program.  But a server could choose to use literal strings,
 even though the results are defined as line-break separated -- that would
 mean that some linebreaks are special.  Hopefully no server will do this.
 
+If B<sieve_connect> fails to connect to an IPv4 server without the B<-4>
+option being explicitly passed, then you've encountered a portability
+issue in the F<IO::Socket::INET6> Perl library and need to upgrade that.
+
 =head1 NON-BUGS
 
 Actually uses STARTTLS.  Can handle script names with embedded whitespace.
+Author needs access to a server which handles embedded quote characters
+properly to complete testing of that.
 
 =head1 HISTORY
 
@@ -1117,14 +1214,20 @@ and deliberately designed to be compatible with sieveshell.
 
 =head1 AUTHOR
 
-Phil Pennock is guilty, m'Lud.
+Phil Pennock E<lt>phil-perl@spodhuis.orgE<gt> is guilty, m'Lud.
 
 =head1 PREREQUISITES
 
-Perl.  C<Authen::SASL>.  C<IO::Socket::INET6>.
-C<IO::Socket::SSL> (at least version 0.97).  C<Pod::Usage>.
-C<Term::ReadKey> to get passwords without echo.
+Perl.  F<Authen::SASL>.  F<IO::Socket::INET6>.
+F<IO::Socket::SSL> (at least version 0.97).  F<Pod::Usage>.
+F<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
-C<Term::ReadLine> will significantly improve interactive mode.
+F<Term::ReadLine> will significantly improve interactive mode.
+
+=head1 INTEROPERABILITY
+
+B<sieve_connect> is regularly tested with the B<timsieved> server
+distributed with the Cyrus IMAP server.  Further interoperability
+testing is underway, more is desired (test accounts appreciated!).
 
 =cut
