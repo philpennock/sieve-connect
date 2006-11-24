@@ -195,6 +195,7 @@ unless (defined $sock) {
 }
 
 $sock->autoflush(1);
+debug "connection: remote host address is @{[$sock->peerhost()]}";
 
 my %capa;
 my %raw_capabilities;
