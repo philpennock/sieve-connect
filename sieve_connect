@@ -56,6 +56,7 @@ use IO::Socket::INET6;
 use IO::Socket::SSL 0.97; # SSL_ca_path bogus before 0.97
 use MIME::Base64;
 use Pod::Usage;
+use POSIX qw/ strftime /;
 use Term::ReadKey;
 # interactive mode will attempt to pull in Term::ReadLine too.
 
@@ -408,15 +409,19 @@ sub localfs_pwd;
 sub aux_quit;
 sub aux_help;
 sub aux_man;
+sub aux_list_keywords;
 sub complete_rl_sieve;
 sub system_result;
 sub tilde_expand ; # don't apply to cmdline params as shell does it for us
 
-# 'routine' => sub ref
+# Do *NOT* include any sort of shell-out.
+# Basic local navigation and diagnostics yes; Yet Another ShellOut Cmd no.
+
+# 'routine' => sub ref; invoked with $sock, params
 # 'help' => help text
 # 'action' => command-line --action
 # 'alias' => extra name
-# 'params' => count of parameters needed
+# 'params' => count of parameters needed; -1 => any
 # 'params_max' => if more parameters are _allowed_ than 'params'
 #                 (last param is repeated if not this many)
 # param list numbering: 1=first param, ...
@@ -441,7 +446,6 @@ my %sieve_commands = (
 	lls	=> {
 		routine => \&localfs_ls,
 		help => 'local ls: look at local filesystem',
-		action => 1,
 		params => 0,
 		params_max => 1,
 		local_name => 1,
@@ -449,7 +453,6 @@ my %sieve_commands = (
 	lcd	=> {
 		routine => \&localfs_chpwd,
 		help => 'local cd: change local working directory',
-		action => 1,
 		params => 0,
 		params_max => 1,
 		local_name => 1,
@@ -457,7 +460,6 @@ my %sieve_commands = (
 	lpwd	=> {
 		routine =>\&localfs_pwd,
 		help => 'local pwd: show local working directory name',
-		action => 1,
 		params => 0,
 	},
 	activate => {
@@ -510,6 +512,30 @@ my %sieve_commands = (
 	page	=> { alias => 'view' },
 	more	=> { alias => 'view' },
 	show	=> { alias => 'view' },
+	echo	=> {
+		hidden => 1,
+		routine => sub { return unless @_ > 1;
+			for (my $i=1; $i<=$#_; ++$i) { print "P$i : $_[$i]\n" }
+		},
+		params => -1,
+	},
+	keywords => {
+		routine => \&aux_list_keywords,
+		help => 'list %KEYWORD substitutions',
+		params => 0,
+	},
+);
+
+my %subst_patterns = (
+	DATE		=> sub { return strftime '%Y-%m-%d', gmtime() },
+	DATELOCAL	=> sub { return strftime '%Y-$m-%d', localtime() },
+	TIME		=> sub { return strftime '%H:%M:%S', gmtime() },
+	TIMELOCAL	=> sub { return strftime '%H:%M:%S', localtime() }, 
+	DATETIME	=> sub { return strftime '%Y-%m-%dT%H:%M:%SZ', gmtime() },
+	SERVER		=> $server,
+	USER		=> $user,
+	PORT		=> $port,
+	RAND16		=> sub { return '' . int rand 65535 },
 );
 
 # ######################################################################
@@ -650,11 +676,11 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 		$needtext = "at least $minp, at most $maxp, parameters";
 	}
 
-	if (@params < $minp or @params > $maxp) {
+	if ($minp != -1 and (@params < $minp or @params > $maxp)) {
 		warn "${diag_prefix}$cmd needs $needtext\n";
 		next;
 	}
-	if (@params != $maxp and @params) {
+	if ($minp != -1 and (@params != $maxp and @params)) {
 		my $repeat = $params[-1];
 		for (my $i = $#params+1; $i <= $maxp; ++$i) {
 			$params[$i] = $repeat;
@@ -662,6 +688,31 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 	}
 
 	debug "Doing: $cmd @params";
+	my $have_subst = 0;
+	for (my $i=0; $i <= $#params; ++$i) {
+		next unless defined $params[$i];
+		next unless $params[$i] =~ /%/;
+		my @cands = ($params[$i] =~ m/%([A-Z][A-Z0-9]*)/g);
+		foreach my $c (sort {length($a) <=> length($b)} @cands) {
+			next unless exists $subst_patterns{$c};
+			my $replace = ref($subst_patterns{$c}) eq 'CODE' ?
+				$subst_patterns{$c}->(
+					cmd	=> $cmd,
+					params	=> \@params,
+					param	=> $params[$i],
+					ind	=> $i,
+					sock	=> $sock,
+				)
+				: $subst_patterns{$c};
+			next if ref($replace);
+			$params[$i] =~ s/%\Q$c\E/$replace/g;
+			++$have_subst;
+		}
+	}
+	if ($have_subst) {
+		print "Command becomes: $cmd @params\n";
+	}
+
 	eval { $sieve_commands{$cmd}{routine}->($sock, @params) };
 	if ($@ and $@ =~ /^QUIT:/) {
 		(my $emsg = $@) =~ s/^QUIT:\n?//;
@@ -851,6 +902,7 @@ sub aux_help
 	my %aliases;
 	my @commands;
 	foreach (keys %sieve_commands) {
+		next if exists $sieve_commands{$_}{hidden};
 		if (exists $sieve_commands{$_}{routine}) {
 			push @commands, $_;
 		} elsif (exists $sieve_commands{$_}{alias}) {
@@ -895,6 +947,12 @@ sub aux_man
 	$parser->parse_file(*DATA);
 }
 
+sub aux_list_keywords
+{
+	print "Command parameters may have these \%KEYWORD patterns:\n";
+	print "\t\%$_\n" foreach sort keys %subst_patterns;
+}
+
 # ######################################################################
 # Term::ReadLine support.
 
@@ -923,6 +981,14 @@ sub complete_rl_sieve
 
 	my $position = scalar @previous_words;
 	--$position if substr($line, $start-1, 1) eq $quote; # *sigh*
+
+	# we only assist if it starts; too icky otherwise
+	if ($text =~ m!^(.*)%((?:[A-Z][A-Z0-9]*)?)\z!) {
+		my ($before, $sofar) = ($1, $2);
+		my @matches = grep /^\Q$sofar\E/, keys %subst_patterns;
+		map {s/^/${before}\%/} @matches;
+		return @matches;
+	}
 
 	if (exists $conf->{remote_name}
 		and $conf->{remote_name} == $position) {
@@ -1147,7 +1213,11 @@ C<sieve_connect> also supports whichever C<SASL> mechanisms your
 F<Authen::SASL::Perl> library provides, as long as they do not require
 SASL protection layers.
 
-In Interactive mode, a C<help> command is available.
+In Interactive mode, a C<help> command is available.  Command parameters
+with a C<%> in them are examined to see if they match C<%KEYWORD>, where
+C<KEYWORD> is always in upper-case.  The list of keywords may be retrieved
+with the C<keywords> command and includes items such as C<%DATE>, C<%USER>,
+etc.
 
 =head1 OPTIONS
 
