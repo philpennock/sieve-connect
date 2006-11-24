@@ -122,7 +122,17 @@ if (defined $ARGV[0] and not defined $server) {
 		$server = $where;
 	}
 }
-$server = 'localhost' unless defined $server;
+unless (defined $server) {
+	$server = 'localhost';
+	if (exists $ENV{'IMAP_SERVER'}
+			and $ENV{'IMAP_SERVER'} !~ m!^/!) {
+		$server = $ENV{'IMAP_SERVER'};
+		# deal with a port number.
+		unless ($server =~ /:.*:/) { # IPv6 address literal
+			$server =~ s/:\d+\z//;
+		}
+	}
+}
 
 die "Bad server name\n"
 	unless $server =~ /^[A-Za-z0-9_.-]+\z/;
@@ -1084,6 +1094,7 @@ sub tilde_expand
 	$path =~ m!^~([^/]*)!;
 	my $tilded = $1;
 	my $user = length $1 ? $1 : scalar getpwuid $>;
+	return $path unless defined $user; # non-Unix?
 	my $home = (getpwnam($user))[7];
 	$path =~ s{^~([^/]*)}{$home};
 # don't be context-sensitive unless asked for, as it's more useful in
@@ -1148,7 +1159,10 @@ script name.
 
 The B<--debug> option turns on diagnostic traces.
 
-The server can be a host or IP address, IPv4 or IPv6, default is F<localhost>.
+The server can be a host or IP address, IPv4 or IPv6;
+the default is C<$IMAP_SERVER> from the environment (if it's not a
+unix-domain socket path) with any port specificaion stripped off,
+else F<localhost>.
 The port can be any Perl port specification, default is F<sieve(2000)>.
 The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
@@ -1182,6 +1196,11 @@ allowed unaccompanied computer usage.
 
 (If B<--server> is not explicitly stated, it may be provided at the end of
 the command-line for compatibility with sieveshell.)
+
+=head1 ENVIRONMENT
+
+C<$IMAP_SERVER> for a default IMAP server.  C<$USERNAME> and C<$LOGNAME>
+where the C<getpwuid()> function is not available.
 
 =head1 BUGS
 
