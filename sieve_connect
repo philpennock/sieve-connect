@@ -640,7 +640,9 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 	}
 
 	unless (exists $sieve_commands{$cmd}) {
-		my @candidates = grep /^\Q$cmd\E/, keys %sieve_commands;
+		my @candidates = grep /^\Q$cmd\E/,
+			grep {not exists $sieve_commands{$_}{hidden}}
+				keys %sieve_commands;
 		if (@candidates == 0) {
 			warn "${diag_prefix}Unknown command: $cmd\n";
 			next;
@@ -962,7 +964,9 @@ sub complete_rl_sieve
 
 	if ($start == 0) {
 		my $c = lc $text;
-		return grep /^\Q$c\E/, keys %sieve_commands;
+		return grep /^\Q$c\E/,
+			grep {not exists $sieve_commands{$_}{hidden}}
+				keys %sieve_commands;
 	}
 
 	my $rl_attribs = $term->Attribs;
