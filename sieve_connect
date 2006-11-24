@@ -1126,7 +1126,8 @@ rule files on a mail server.
 B<sieve_connect> can be invoked with an action from the command-line
 to make it easy to script one-shot actions, it can be provided with
 a script file or it can be left to enter an interactive command-loop,
-where it supports tab-completion and basic navigation of the local
+where it supports tab-completion (if the supporting Perl module is
+available) and basic navigation of the local
 file-system in the style of C<FTP> clients.
 
 B<sieve_connect> supports the use of C<TLS> via the C<STARTTLS> command,
@@ -1223,6 +1224,7 @@ F<IO::Socket::SSL> (at least version 0.97).  F<Pod::Usage>.
 F<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
 F<Term::ReadLine> will significantly improve interactive mode.
+F<Term::ReadLine::Gnu> will improve it further by allowing tab-completion.
 
 =head1 INTEROPERABILITY
 
