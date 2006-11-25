@@ -731,6 +731,7 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 $cmdlinedone_func->() if defined $cmdlinedone_func;
 
 sfinish $sock;
+print "\n";
 exit $exitval;
 
 # ######################################################################
