@@ -528,7 +528,7 @@ my %sieve_commands = (
 
 my %subst_patterns = (
 	DATE		=> sub { return strftime '%Y-%m-%d', gmtime() },
-	DATELOCAL	=> sub { return strftime '%Y-$m-%d', localtime() },
+	DATELOCAL	=> sub { return strftime '%Y-%m-%d', localtime() },
 	TIME		=> sub { return strftime '%H:%M:%S', gmtime() },
 	TIMELOCAL	=> sub { return strftime '%H:%M:%S', localtime() }, 
 	DATETIME	=> sub { return strftime '%Y-%m-%dT%H:%M:%SZ', gmtime() },
