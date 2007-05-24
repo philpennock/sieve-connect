@@ -271,6 +271,7 @@ if (exists $capa{STARTTLS}) {
 		my $e = IO::Socket::SSL::errstr();
 		die "STARTTLS promotion failed: $e\n";
 	};
+	debug("--- TLS activated here");
 	ssend $sock, "CAPABILITY";
 	parse_capabilities($sock, $prioritise_auth_external);
 }
@@ -331,6 +332,7 @@ if (defined $realm) {
 	my $sasl_m = $authconversation->mechanism()
 		or die "Oh why can't I decide which auth mech to send?\n";
 	if ($sasl_m eq 'GSSAPI') {
+		debug("-A- GSSAPI sasl_m <temp>");
 		# gross hack, but it was bad of us to assume anything.
 		# It also means that we ignore anything specified by the
 		# user, which is good since it's Kerberos anyway.
