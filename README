@@ -40,7 +40,7 @@ SSL certificates are assumed to be in /etc/ssl/certs/ but this is
 configured at the very start of the script.
 
 
-Pre-Requisites (Perl)
+Pre-Requisites
 ==============
 
  Perl5
@@ -63,5 +63,12 @@ old svn repository, where this was just one script amongst others.
 Please excuse the 'XXX' for user identifier in the ChangeLog -- I'm
 keeping my email address slightly less spam-harvestable (GSSAPI
 authentication to svn/DAV leaves your entire user identifier in the
-logs, which includes the realm).
+logs, which includes the realm).  There's an email address in the
+man-page, which might be excessively spam-filtered, and other email
+addresses in the PGP key used for signing the distribution.
+
+The PGP key used for signing is in the strong set, so if you can't
+verify the key then attend a PGP keysigning party.  It's where all the,
+uhm, uncool people are.  No, wait wait!  The _cool_ people.  That's it.
+Yeah.  *cough*
 
