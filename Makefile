@@ -42,4 +42,4 @@ clean:
 	rm -f "./$(SCRIPTNAME)"
 
 distclean: clean
-	rm -f ./ChangeLog ./versionfile ./datefile
+	rm -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile
