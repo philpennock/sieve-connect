@@ -1,0 +1,67 @@
+This is sieve-connect.  A client for the MANAGESIEVE protocol, as
+implemented by timsieved in Cyrus IMAP.  This software is licensed and
+the terms are provided in the file "LICENSE" as supplied with this
+software (BSD license without the advertising clause).
+
+SIEVE is an RFC-specified language for mail filtering, which at time of
+writing is specified in the following RFCs:
+
+  RFC 3028 Sieve: A Mail Filtering Language
+  RFC 3431 Sieve Extension: Relational Tests
+  RFC 3598 Sieve Email Filtering -- Subaddress Extension
+  RFC 3685 SIEVE Email Filtering: Spamtest and VirusTest Extensions
+  RFC 3894 Sieve Extension: Copying Without Side Effects
+
+and various drafts, both IETF and individual submissions.  It's designed
+to be regular enough for machines to be able to manipulate, whilst still
+being editable by humans.  Alas, not many clients actually implement
+this instead of embedding their own internal codes in sieve comments,
+defeating the goal of being able to edit with a client of your choice.
+
+sieve-connect speaks MANAGESIEVE and supports TLS for connection privacy
+and also authentication if using client certificates.  sieve-connect
+will use SASL authentication; SASL integrity layers are not supported,
+use TLS instead.  GSSAPI authentication works on some platforms, the
+cause of failures on others is still being diagnosed.
+
+sieve-connect is designed to be both a tool which can be invoked from
+scripts and also a decent interactive client.  It should also be a
+drop-in replacement for "sieveshell", as supplied with Cyrus IMAP.
+
+
+Installing
+==========
+
+You'll need Perl5 installed and various Perl modules from CPAN, as
+detailed below.  None of the modules are unusual.  A man-page is
+provided.
+
+SSL certificates are assumed to be in /etc/ssl/certs/ but this is
+configured at the very start of the script.
+
+
+Pre-Requisites (Perl)
+==============
+
+ Perl5
+ Authen::SASL
+ IO::Socket::INET6
+ IO::Socket::SSL      0.97 or greater
+ Pod::Usage
+ Term::ReadKey 	      optional; password prompting without echo
+ Term::ReadLine       optional; improves interactive mode
+ Term::ReadLine::Gnu  optional; adds tab-completion
+ various other Perl modules which are shipped with Perl itself
+
+
+Notes about release and packaging
+=================================
+
+The first release of the X.YY tarball corresponds to version 114 in the
+old svn repository, where this was just one script amongst others.
+
+Please excuse the 'XXX' for user identifier in the ChangeLog -- I'm
+keeping my email address slightly less spam-harvestable (GSSAPI
+authentication to svn/DAV leaves your entire user identifier in the
+logs, which includes the realm).
+
