@@ -591,7 +591,7 @@ if (defined $execscript) {
 	eval {
 		require Term::ReadLine;
 		import Term::ReadLine;
-		my $term = new Term::ReadLine 'sieve_connect';
+		my $term = new Term::ReadLine 'sieve-connect';
 		closedie $sock, "No terminal initialisation"
 			unless defined $term;
 		$term->ornaments(0);
@@ -1180,14 +1180,14 @@ __END__
 
 =head1 NAME
 
-sieve_connect -- simple sieve command-line client
+sieve-connect -- simple sieve command-line client
 
 =head1 SYNOPSIS
 
- sieve_connect [-s <hostname>] [-p <portspec>] [-u <user>] [a <authzid>]
+ sieve-connect [-s <hostname>] [-p <portspec>] [-u <user>] [a <authzid>]
                [-m <authmech>] [-r realm] [-e execscript]
 	       [... longopts ...]
- sieve_connect [--localsieve <script>] [--remotesieve <script>]
+ sieve-connect [--localsieve <script>] [--remotesieve <script>]
 	       [--debug]
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
@@ -1201,22 +1201,22 @@ sieve_connect -- simple sieve command-line client
 
 =head1 DESCRIPTION
 
-B<sieve_connect> is a client for the C<MANAGESIEVE> protocol, which is
+B<sieve-connect> is a client for the C<MANAGESIEVE> protocol, which is
 an Internet Draft protocol for manipulation of C<Sieve> scripts in a
 repository.
-More simply, B<sieve_connect> lets you control your mail-filtering
+More simply, B<sieve-connect> lets you control your mail-filtering
 rule files on a mail server.
 
-B<sieve_connect> can be invoked with an action from the command-line
+B<sieve-connect> can be invoked with an action from the command-line
 to make it easy to script one-shot actions, it can be provided with
 a script file or it can be left to enter an interactive command-loop,
 where it supports tab-completion (if the supporting Perl module is
 available) and basic navigation of the local
 file-system in the style of C<FTP> clients.
 
-B<sieve_connect> supports the use of C<TLS> via the C<STARTTLS> command,
+B<sieve-connect> supports the use of C<TLS> via the C<STARTTLS> command,
 including authentication via client certificates.
-C<sieve_connect> also supports whichever C<SASL> mechanisms your
+C<sieve-connect> also supports whichever C<SASL> mechanisms your
 F<Authen::SASL::Perl> library provides, as long as they do not require
 SASL protection layers.
 
@@ -1292,7 +1292,7 @@ to pass to a program.  But a server could choose to use literal strings,
 even though the results are defined as line-break separated -- that would
 mean that some linebreaks are special.  Hopefully no server will do this.
 
-If B<sieve_connect> fails to connect to an IPv4 server without the B<-4>
+If B<sieve-connect> fails to connect to an IPv4 server without the B<-4>
 option being explicitly passed, then you've encountered a portability
 issue in the F<IO::Socket::INET6> Perl library and need to upgrade that.
 
@@ -1304,7 +1304,7 @@ properly to complete testing of that.
 
 =head1 HISTORY
 
-B<sieve_connect> was written as a demonstration for the C<info-cyrus>
+B<sieve-connect> was written as a demonstration for the C<info-cyrus>
 mailing-list, 2006-11-14.  It was a single-action-and-quit script for
 scripting purposes.  The command-loop code was written (two days) later
 and deliberately designed to be compatible with sieveshell.
@@ -1324,7 +1324,7 @@ F<Term::ReadLine::Gnu> will improve it further by allowing tab-completion.
 
 =head1 INTEROPERABILITY
 
-B<sieve_connect> is regularly tested with the B<timsieved> server
+B<sieve-connect> is regularly tested with the B<timsieved> server
 distributed with the Cyrus IMAP server.  Further interoperability
 testing is underway, more is desired (test accounts appreciated!).
 
