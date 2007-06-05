@@ -1179,7 +1179,7 @@ __END__
 
 =head1 NAME
 
-sieve-connect -- managesieve command-line client
+sieve-connect - managesieve command-line client
 
 =head1 SYNOPSIS
 
