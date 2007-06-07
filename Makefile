@@ -38,7 +38,10 @@ install: all install-bin install-man
 install-bin: $(SCRIPTNAME)
 	$(INSTALLPROG) -m $(BINPERM) $(INSTALLARGS) $(SCRIPTNAME) $(INSTALLROOT)$(PREFIX)/$(BINDIR)
 
-install-man: $(MANPAGE)
+# making the man-page is dependent upon files not distributed, so they're
+# regenerated, so we don't list it as a dependency here -- instead we
+# assume that the maintainer created it for us (as a tarball depenency)
+install-man:
 	$(INSTALLPROG) -m $(MANPERM) $(INSTALLARGS) $(MANPAGE) $(INSTALLROOT)$(PREFIX)/$(MANDIR)/$(MANSECTDIR)
 
 bin $(SCRIPTNAME): $(SCRIPTSRC)
