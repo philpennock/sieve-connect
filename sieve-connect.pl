@@ -75,6 +75,7 @@ my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
+my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -93,6 +94,8 @@ GetOptions(
 	"clientkey=s"	=> \$sslkeyfile,
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
+	"noclearauth"	=> \$forbid_clearauth,
+	"noclearchan"	=> sub { $forbid_clearauth = $forbid_clearchan = 1 },
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
@@ -271,8 +274,11 @@ if (exists $capa{STARTTLS}) {
 		die "STARTTLS promotion failed: $e\n";
 	};
 	debug("--- TLS activated here");
+	$forbid_clearauth = 0;
 	ssend $sock, "CAPABILITY";
 	parse_capabilities($sock, $prioritise_auth_external);
+} elsif ($forbid_clearchan) {
+	die "TLS not offered, SASL confidentiality not supported in client.\n";
 }
 
 my %authen_sasl_params;
@@ -322,7 +328,9 @@ my $sasl = Authen::SASL->new(%authen_sasl_params);
 die "SASL object init failed (local problem): $!\n"
 	unless defined $sasl;
 
-my $authconversation = $sasl->client_new('sieve', $server, '')
+my $secflags = 'noanonymous';
+$secflags .= ' noplaintext' if $forbid_clearauth;
+my $authconversation = $sasl->client_new('sieve', $server, $secflags)
 	or die "SASL conversation init failed (local problem): $!\n";
 if (defined $realm) {
 	$authconversation->property(realm => $realm);
@@ -1193,6 +1201,7 @@ sieve-connect - managesieve command-line client
 	       [--realm <realm>] [--passwordfd <n>]
 	       [--clientkey <file> --clientcert <file>]|
 	        [--clientkeycert <file>]
+	       [--noclearauth] [--noclearchan]
 	       [--authmech <mechanism>]
 	       [--upload|--download|--list|--delete|
 	        --activate|--deactivate]|[--exec <script>]
@@ -1260,6 +1269,11 @@ For SSL client certificate authentication, either B<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
 B<--clientkey> and B<--clientcert> should point to the relevant files.
 The data should be in PEM file-format.
+
+The B<--noclearauth> option will prevent use of cleartext authentication
+mechanisms unless protected by TLS.  The B<--noclearchan> option will
+mandate use of some confidentiality layer; at this time only TLS is
+supported.
 
 The remaining options denote actions.  One, and only one, action may be
 present.  If no action is present, the interactive mode is entered.

@@ -35,10 +35,10 @@ all: $(SCRIPTNAME)
 
 install: all install-bin install-man
 
-install-bin:
+install-bin: $(SCRIPTNAME)
 	$(INSTALLPROG) -m $(BINPERM) $(INSTALLARGS) $(SCRIPTNAME) $(INSTALLROOT)$(PREFIX)/$(BINDIR)
 
-install-man:
+install-man: $(MANPAGE)
 	$(INSTALLPROG) -m $(MANPERM) $(INSTALLARGS) $(MANPAGE) $(INSTALLROOT)$(PREFIX)/$(MANDIR)/$(MANSECTDIR)
 
 bin $(SCRIPTNAME): $(SCRIPTSRC)
