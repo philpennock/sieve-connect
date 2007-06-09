@@ -39,6 +39,8 @@ my %ssl_options = (
 	SSL_verify_mode	=> 0x01,
 	SSL_ca_path	=> '/etc/ssl/certs',
 );
+# These defaults can be overriden on the cmdline:
+my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
 
 my @cmd_localfs_ls = qw( ls -C );
 
@@ -75,7 +77,6 @@ my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
-my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
