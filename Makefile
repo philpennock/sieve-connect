@@ -69,12 +69,13 @@ man $(MANPAGE): $(SCRIPTSRC) datefile versionfile
 
 # filter is against spammers (see README)
 ChangeLog:
-	svn log | sed '/^r[0-9]/s/|[^|]*|/| XXX |/' > ChangeLog
+	TZ='' svn log | sed '/^r[0-9]/s/|[^|]*|/| XXX |/' > ChangeLog
 
+# NB: Id tag is already in zulu time, so no problem with program itself
 datefile versionfile:
-	svn up
-	svn info | sed -n "s/^Revision: \(.*\)/$(TARVERSIONMAJ).\1$(TARVERSIONPATCH)/p" > versionfile
-	svn info | sed -n 's/^Last Changed Date: \([^ ]*\) .*/\1/p' >datefile
+	TZ='' svn up
+	TZ='' svn info | sed -n "s/^Revision: \(.*\)/$(TARVERSIONMAJ).\1$(TARVERSIONPATCH)/p" > versionfile
+	TZ='' svn info | sed -n 's/^Last Changed Date: \([^ ]*\) .*/\1/p' >datefile
 
 distclean: clean
 	$(RM) -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile
