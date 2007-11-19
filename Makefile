@@ -68,11 +68,11 @@ man $(MANPAGE): $(SCRIPTSRC) datefile versionfile
 	pod2man -n "$(SCRIPTNAME)" -c '' -d "`cat datefile`" -r "`cat versionfile`" "$(SCRIPTSRC)" >"$(MANPAGE)"
 
 # filter is against spammers (see README)
-ChangeLog:
+ChangeLog: .svn/text-base/*
 	TZ='' svn log | sed '/^r[0-9]/s/|[^|]*|/| XXX |/' > ChangeLog
 
 # NB: Id tag is already in zulu time, so no problem with program itself
-datefile versionfile:
+datefile versionfile: .svn/text-base/*
 	TZ='' svn up
 	TZ='' svn info | sed -n "s/^Revision: \(.*\)/$(TARVERSIONMAJ).\1$(TARVERSIONPATCH)/p" > versionfile
 	TZ='' svn info | sed -n 's/^Last Changed Date: \([^ ]*\) .*/\1/p' >datefile
