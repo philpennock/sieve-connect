@@ -381,6 +381,10 @@ if (defined $realm) {
 		$challenge = decode_base64($challenge);
 
 		my $response = $authconversation->client_step($challenge);
+		if ($authconversation->code()) {
+			my $emsg = $authconversation->error();
+			closedie($sock, "SASL Error: $emsg\n");
+		}
 		$response = '' unless defined $response; # sigh
 		my $senddata = encode_base64($response, '');
 		my $sendlen = length $senddata;
