@@ -352,6 +352,10 @@ if (defined $realm) {
 	}
 
 	my $sasl_tosend = $authconversation->client_start();
+	if ($authconversation->code()) {
+		my $emsg = $authconversation->error();
+		closedie($sock, "SASL Error: $emsg\n");
+	}
 
 	if (defined $sasl_tosend and length $sasl_tosend) {
 		my $mimedata = encode_base64($sasl_tosend, '');
@@ -370,7 +374,7 @@ if (defined $realm) {
 		} else {
 			unless (/^{(\d+)\+?}\r?$/m) {
 				sfinish $sock, "*";
-				die $sock, "Failure to parse server SASL response.\n";
+				closedie($sock, "Failure to parse server SASL response.\n");
 			}
 			($challenge = $_) =~ s/^{\d+\+?}\r?\n?//;
 		}
