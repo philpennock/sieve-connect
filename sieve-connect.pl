@@ -47,6 +47,15 @@ my @cmd_localfs_ls = qw( ls -C );
 # ######################################################################
 # No user-serviceable parts below
 
+our $VERSION = 0;
+my $svn_revision = '$Revision$';
+if ($svn_revision =~ /^.Revision:\s*(\d+)\s*\$\z/) {
+	$svn_revision = $1;
+	$VERSION = '0.' . $1;
+} else {
+	$svn_revision = '0 because unknown';
+}
+
 use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
 use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
 use Cwd qw();
@@ -110,6 +119,7 @@ GetOptions(
 	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
+	'version'	=> sub { print "${0}: Version $VERSION\n"; exit 0 },
 ) or pod2usage(2);
 # We don't implement HAVESPACE <script> <size>
 
