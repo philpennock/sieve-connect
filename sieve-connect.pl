@@ -415,6 +415,11 @@ if (defined $realm) {
 		# so if it says "okay", we don't keep trying.
 		my $final_auth = decode_base64($1);
 		my $valid = $authconversation->client_step($final_auth);
+		# Skip checking $authconversation->code() here because
+		# Authen::SASL::Perl::DIGEST-MD5 module will complain at this
+		# final step:
+		#   Server did not provide required field(s): algorithm nonce
+		# which is bogus -- it's not required or expected.
 		if (defined $valid and length $valid) {
 			closedie($sock, "Server failed final verification");
 		}
