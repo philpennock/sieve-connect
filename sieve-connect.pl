@@ -626,10 +626,13 @@ if (defined $execscript) {
 		closedie $sock, "No terminal initialisation"
 			unless defined $term;
 		$term->ornaments(0);
-		$term->Attribs->{completion_function} =
-			sub { complete_rl_sieve($term, $sock, @_) };
-		$term->Attribs->{completer_quote_characters} = '"';
-		$term->Attribs->{filename_quote_characters} = " \t";
+		if ($term->ReadLine() =~ /::Gnu/) {
+			# The relevant hooks aren't in the Perl implementation
+			$term->Attribs->{completion_function} =
+				sub { complete_rl_sieve($term, $sock, @_) };
+			$term->Attribs->{completer_quote_characters} = '"';
+			$term->Attribs->{filename_quote_characters} = " \t";
+		}
 		$cmdlineget_func = sub { return $term->readline('> ') };
 		print STDERR "ReadLine support enabled.\n";
 	};
