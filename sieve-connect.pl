@@ -231,16 +231,18 @@ my %capa_dosplit = map {$_ => 1} qw( SASL SIEVE );
 sub parse_capabilities
 {
 	my $sock = shift;
-	my $external_first = shift;
-	$external_first = 0 unless defined $external_first;
+	local %_ = @_;
+	my $external_first = 0;
+	$external_first = $_{external_first} if exists $_{external_first};
 
 	%raw_capabilities = ();
 	%capa = ();
 	while (<$sock>) {
 		chomp; s/\s*$//;
 		received;
-		last if /^OK$/;
-		if (/^\"([^"]+)\"\s+\"(.+)\"$/) {
+		if (/^OK$/) {
+			last unless exists $_{until_see_no};
+		} elsif (/^\"([^"]+)\"\s+\"(.+)\"$/) {
 			my ($k, $v) = ($1, $2);
 			$raw_capabilities{$k} = $v;
 			$capa{$k} = $v;
@@ -250,10 +252,14 @@ sub parse_capabilities
 		} elsif (/^\"([^"]+)\"$/) {
 			$raw_capabilities{$1} = '';
 			$capa{$1} = 1;
+		} elsif (/^NO/) {
+			last if exists $_{until_see_no};
+			warn "Unhandled server line: $_\n"
 		} else {
 			warn "Unhandled server line: $_\n"
 		}
-	}
+	};
+
 	if (exists $capa{SASL} and $external_first
 			and grep {uc($_) eq 'EXTERNAL'} @{$capa{SASL}}) {
 		# We do two things.  We shift the EXTERNAL to the head of the
@@ -286,8 +292,23 @@ if (exists $capa{STARTTLS}) {
 	};
 	debug("--- TLS activated here");
 	$forbid_clearauth = 0;
-	ssend $sock, "CAPABILITY";
-	parse_capabilities($sock, $prioritise_auth_external);
+	# Cyrus sieve might send CAPABILITY after STARTTLS without being
+	# prompted for it.  This breaks the command-response model.
+	# We can't just check to see if there's data to read or not, since
+	# that will break if the next data is delayed (race condition).
+	# There is no protocol-compliant method to determine this, short
+	# of "wait a while, see if anything comes along; if not, send
+	# CAPABILITY ourselves".  So, I break protocol by sending the
+	# non-existent command NOOP, then scan for the resulting NO.
+	ssend $sock, "NOOP";
+	parse_capabilities($sock,
+		until_see_no	=> 1,
+		external_first => $prioritise_auth_external);
+	unless (scalar keys %capa) {
+		ssend $sock, "CAPABILITY";
+		parse_capabilities($sock,
+			external_first => $prioritise_auth_external);
+	}
 } elsif ($forbid_clearchan) {
 	die "TLS not offered, SASL confidentiality not supported in client.\n";
 }
