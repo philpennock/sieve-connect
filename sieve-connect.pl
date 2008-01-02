@@ -212,6 +212,7 @@ my $sock = IO::Socket::INET6->new(
 	PeerPort	=> $port,
 	Proto		=> 'tcp',
 	Domain		=> $net_domain,
+	MultiHomed	=> 1, # try multiple IPs (IPv4 works, v6 doesn't?)
 );
 unless (defined $sock) {
 	my $extra = '';
