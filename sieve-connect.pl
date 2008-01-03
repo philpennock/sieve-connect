@@ -86,7 +86,7 @@ my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
-my $dump_ssl_information = 0;
+my $dump_tls_information = 0;
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -110,7 +110,7 @@ GetOptions(
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
-	"dumpsslinfo"	=> \$dump_ssl_information,
+	"dumptlsinfo|dumpsslinfo"	=> \$dump_tls_information,
 	# option names can be short-circuited, $action is complete:
 	"upload"	=> sub { $action = 'upload' },
 	"download"	=> sub { $action = 'download' },
@@ -294,14 +294,14 @@ if (exists $capa{STARTTLS}) {
 		die "STARTTLS promotion failed: $e\n";
 	};
 	debug("--- TLS activated here");
-	if ($dump_ssl_information) {
+	if ($dump_tls_information) {
 		print $sock->dump_peer_certificate();
 		if ($DEBUGGING and
 		    exists $main::{"Net::"} and exists $main::{"Net::"}{"SSLeay::"}) {
 			# IO::Socket::SSL depends upon Net::SSLeay
 			# so this should be fairly safe, albeit messing
 			# around behind IO::Socket::SSL's back.
-			print Net::SSLeay::PEM_get_string_X509(
+			print STDERR Net::SSLeay::PEM_get_string_X509(
 				$sock->peer_certificate());
 		}
 	}
@@ -1263,7 +1263,7 @@ sieve-connect - managesieve command-line client
                [-m <authmech>] [-r realm] [-e execscript]
 	       [... longopts ...]
  sieve-connect [--localsieve <script>] [--remotesieve <script>]
-	       [--debug]
+	       [--debug] [--dumptlsinfo]
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
 	       [--realm <realm>] [--passwordfd <n>]
@@ -1311,6 +1311,9 @@ people think about names in the local filesystem.  There is no default
 script name.
 
 The B<--debug> option turns on diagnostic traces.
+The B<--dumptlsinfo> shows the TLS (SSL) peer information; if specified
+together with B<--debug> then the server's PEM certificate will be
+provided as debug trace.
 
 The server can be a host or IP address, IPv4 or IPv6;
 the default is C<$IMAP_SERVER> from the environment (if it's not a
