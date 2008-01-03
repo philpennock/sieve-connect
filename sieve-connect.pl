@@ -86,6 +86,7 @@ my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
+my $dump_ssl_information = 0;
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -109,6 +110,7 @@ GetOptions(
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
+	"dumpsslinfo"	=> \$dump_ssl_information,
 	# option names can be short-circuited, $action is complete:
 	"upload"	=> sub { $action = 'upload' },
 	"download"	=> sub { $action = 'download' },
@@ -292,6 +294,17 @@ if (exists $capa{STARTTLS}) {
 		die "STARTTLS promotion failed: $e\n";
 	};
 	debug("--- TLS activated here");
+	if ($dump_ssl_information) {
+		print $sock->dump_peer_certificate();
+		if ($DEBUGGING and
+		    exists $main::{"Net::"} and exists $main::{"Net::"}{"SSLeay::"}) {
+			# IO::Socket::SSL depends upon Net::SSLeay
+			# so this should be fairly safe, albeit messing
+			# around behind IO::Socket::SSL's back.
+			print Net::SSLeay::PEM_get_string_X509(
+				$sock->peer_certificate());
+		}
+	}
 	$forbid_clearauth = 0;
 	# Cyrus sieve might send CAPABILITY after STARTTLS without being
 	# prompted for it.  This breaks the command-response model.
