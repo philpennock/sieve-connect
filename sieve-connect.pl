@@ -239,8 +239,8 @@ sub parse_capabilities
 	%raw_capabilities = ();
 	%capa = ();
 	while (<$sock>) {
-		chomp; s/\s*$//;
 		received;
+		chomp; s/\s*$//;
 		if (/^OK$/) {
 			last unless exists $_{until_see_no};
 		} elsif (/^\"([^"]+)\"\s+\"(.+)\"$/) {
@@ -1104,8 +1104,14 @@ sub debug
 	print STDERR "$_[0]\n";
 }
 
-sub sent { $_[0] = $_ unless defined $_[0]; debug ">>> $_[0]"; }
-sub received { $_[0] = $_ unless defined $_[0]; debug "<<< $_[0]"; }
+sub diag {
+	my ($prefix, $data) = @_;
+	$data =~ s/\r/\\r/g; $data =~ s/\n/\\n/g; $data =~ s/\t/\\t/g;
+	$data =~ s/([^[:graph:] ])/sprintf("%%%02X", ord $1)/eg;
+	debug "$prefix $data";
+}
+sub sent { my $t = defined $_[0] ? $_[0] : $_; diag('>>>', $t) }
+sub received { my $t = defined $_[0] ? $_[0] : $_; diag('<<<', $t) }
 
 sub ssend
 {
@@ -1120,7 +1126,7 @@ sub ssend
 # yes, the debug output can have extra blank lines if supplied -noeol because
 # they're already present.  Rather than mess around to tidy it up, I'm leaving
 # it because it's debug output, not UI or protocol text.
-		sent $l;
+		sent "$l$eol";
 	}
 }
 
@@ -1145,10 +1151,10 @@ sub sget
 		}
 		$dochomp = 0;
 	}
+	received $l;
 	if ($dochomp) {
 		chomp $l; $l =~ s/\s*$//;
 	}
-	received $l;
 	if (defined wantarray) {
 		return $l;
 	} else {
