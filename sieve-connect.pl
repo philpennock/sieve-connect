@@ -4,7 +4,7 @@
 #
 # timsieved client script
 #
-# Copyright © 2006, 2007 Phil Pennock.  All rights reserved.
+# Copyright © 2006, 2007, 2008 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
