@@ -60,6 +60,7 @@ use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
 use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
 use Cwd qw();
 use Errno;
+use File::Basename qw();
 use Getopt::Long;
 use IO::File;
 use IO::Socket::INET6;
@@ -811,6 +812,11 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 	}
 	if ($minp != -1 and (@params != $maxp and @params)) {
 		my $repeat = $params[-1];
+		# When repeating it's assumed to be a filename.  There may
+		# be an issue with putting a file from a different directory,
+		# should take basename for repeats.  I can't think of a
+		# situation where basename wouldn't be correct.
+		$repeat = File::Basename::basename($repeat);
 		for (my $i = $#params+1; $i <= $maxp; ++$i) {
 			$params[$i] = $repeat;
 		}
