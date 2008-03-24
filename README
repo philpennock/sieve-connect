@@ -6,10 +6,13 @@ software (BSD license without the advertising clause).
 SIEVE is an RFC-specified language for mail filtering, which at time of
 writing is specified in the following RFCs:
 
-  RFC 3028 Sieve: A Mail Filtering Language
-  RFC 3431 Sieve Extension: Relational Tests
-  RFC 3598 Sieve Email Filtering -- Subaddress Extension
-  RFC 3685 SIEVE Email Filtering: Spamtest and VirusTest Extensions
+  RFC 5228 Sieve: An Email Filtering Language
+  RFC 5229 Sieve Email Filtering: Variables Extension
+  RFC 5230 Sieve Email Filtering: Vacation Extension
+  RFC 5231 Sieve Email Filtering: Relational Extension
+  RFC 5232 Sieve Email Filtering: Imap4flags Extension
+  RFC 5233 Sieve Email Filtering: Subaddress Extension
+  RFC 5235 Sieve Email Filtering: Spamtest and Virustest Extensions
   RFC 3894 Sieve Extension: Copying Without Side Effects
 
 and various drafts, both IETF and individual submissions.  It's designed
@@ -17,6 +20,11 @@ to be regular enough for machines to be able to manipulate, whilst still
 being editable by humans.  Alas, not many clients actually implement
 this instead of embedding their own internal codes in sieve comments,
 defeating the goal of being able to edit with a client of your choice.
+
+Whilst the timsieved implementation remains the baseline, sieve-connect
+is expected to be a compatible implementation of MANAGESIEVE as
+documented in "draft-martin-managesieve-08.txt"; some issues to be
+worked on are documented in the "TODO" file.
 
 sieve-connect speaks MANAGESIEVE and supports TLS for connection privacy
 and also authentication if using client certificates.  sieve-connect
