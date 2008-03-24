@@ -72,6 +72,8 @@ ChangeLog: .svn/text-base/*
 
 # NB: Id tag is already in zulu time, so no problem with program itself
 datefile versionfile: .svn/text-base/*
+	@grep -q "Copyright.*\\<`date +%Y`" $(SCRIPTSRC) || { echo "Current year not in $(SCRIPTSRC) Copyright line"; false; }
+	@grep -q "Copyright.*\\<`date +%Y`" LICENSE || { echo "Current year not in LICENSE Copyright line"; false; }
 	TZ='' svn up
 	TZ='' svn info | sed -n "s/^Revision: \(.*\)/$(TARVERSIONMAJ).\1$(TARVERSIONPATCH)/p" > versionfile
 	TZ='' svn info | sed -n 's/^Last Changed Date: \([^ ]*\) .*/\1/p' >datefile
