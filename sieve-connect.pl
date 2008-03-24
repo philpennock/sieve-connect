@@ -507,13 +507,21 @@ if (defined $realm) {
 		# so if it says "okay", we don't keep trying.
 		my $final_auth = decode_base64($1);
 		my $valid = $authconversation->client_step($final_auth);
-		# Skip checking $authconversation->code() here because
+		# With released versions of Authen::SASL,
 		# Authen::SASL::Perl::DIGEST-MD5 module will complain at this
 		# final step:
 		#   Server did not provide required field(s): algorithm nonce
 		# which is bogus -- it's not required or expected.
+		# NB: at time of writing, Authen::SASL is 2.10 and
+		# Authen::SASL::Perl is 1.05; I've supplied a patch.
+		if ($authconversation->code()) {
+			my $emsg = $authconversation->error();
+			if ($Authen::SASL::Perl::VERSION > 1.05) {
+				closedie($sock, "SASL Error: $emsg\n");
+			}
+		}
 		if (defined $valid and length $valid) {
-			closedie($sock, "Server failed final verification");
+			closedie($sock, "Server failed final verification [$valid]");
 		}
 	}
 
