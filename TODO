@@ -1,0 +1,21 @@
+Things that sieve-connect would like for xmas.
+
+ * A final published specification to work against
+   * A noop command would be good, to help clients work around the ambiguity
+     in whether servers do or don't send a capability response automatically;
+     this breaks the lockstep model and would require an event-driven engine
+     to work around, which is too much for a client designed to be small and
+     simple.  We hack around it by sending NOOP and expecting a NO response.
+ * A full test-suite to torture the client.
+ * Support for referrals
+   * A server which does this so it can be tested
+ * Figuring out sensible things to do with response codes in general
+ * Figuring out what's going on with the isode implementation and the Perl
+   SASL libraries that breaks authentication.
+ * A UTF-8 server, so I can add tests for the UTF-8 filenames and figure out
+   what should be done to support this cleanly with minimal pain.  Adding
+   untestable support is not a path I wish to explore.
+   * Note that the protocol itself is pretty much US-ASCII with an exception
+     that script filenames can be in UTF-8; but then literal quoted strings
+     (length prefix) count in octets and there's no character set restriction
+     upon those.

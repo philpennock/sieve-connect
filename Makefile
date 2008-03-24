@@ -19,7 +19,7 @@ SCRIPTNAME=sieve-connect
 MANPAGE=sieve-connect.1
 SCRIPTSRC=sieve-connect.pl
 TARPREFIX=sieve-connect
-DISTFILES=$(SCRIPTSRC) $(MANPAGE) ChangeLog Makefile README LICENSE find-perl58.sh
+DISTFILES=$(SCRIPTSRC) $(MANPAGE) ChangeLog Makefile README LICENSE TODO find-perl58.sh
 GPG=gpg
 PGPSIGNKEY=0x3903637F
 

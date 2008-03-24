@@ -35,7 +35,7 @@ use strict;
 
 my %ssl_options = (
 	SSL_version	=> 'TLSv1',
-	SSL_cipher_list	=> 'ALL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
+	SSL_cipher_list	=> 'ALL:!aNULL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
 	SSL_verify_mode	=> 0x01,
 	SSL_ca_path	=> '/etc/ssl/certs',
 );
