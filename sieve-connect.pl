@@ -230,6 +230,20 @@ debug "connection: remote host address is @{[$sock->peerhost()]}";
 my %capa;
 my %raw_capabilities;
 my %capa_dosplit = map {$_ => 1} qw( SASL SIEVE );
+# Key is permissably empty keyword, value if defined is closure to call with
+# capabilities after receiving complete list, for verifying permissability.
+# First param $sock, second \%capa, third \%raw_capabilities
+my %capa_permit_empty = (
+	# draft 7 onwards clarify that empty SASL is permitted, but is error
+	# in absense of STARTTLS
+	SASL	=> sub {
+		return if exists $_[1]{STARTTLS};
+		# We die because there's no way to authenticate.
+		# Spec states that after STARTTLS SASL must be non-empty
+		closedie $_[0], "Empty SASL not permitted without STARTTLS\n";
+		},
+	SIEVE	=> undef,
+);
 
 sub parse_capabilities
 {
@@ -238,15 +252,37 @@ sub parse_capabilities
 	my $external_first = 0;
 	$external_first = $_{external_first} if exists $_{external_first};
 
+	my @double_checks;
 	%raw_capabilities = ();
 	%capa = ();
 	while (<$sock>) {
 		received;
 		chomp; s/\s*$//;
-		if (/^OK$/) {
+		if (/^OK\b/) {
 			last unless exists $_{until_see_no};
-		} elsif (/^\"([^"]+)\"\s+\"(.+)\"$/) {
-			my ($k, $v) = ($1, $2);
+		} elsif (/^\"([^"]+)\"\s+\"(.*)\"$/) {
+			my ($k, $v) = (uc($1), $2);
+			unless (length $v) {
+				unless (exists $capa_permit_empty{$k}) {
+					warn "Empty \"$k\" capability spec not permitted: $_\n";
+					# Don't keep the advertised capability unless
+					# it has some value which is needed.  Eg,
+					# NOTIFY must list a mechanism to be useful.
+					next;
+				}
+				if (defined $capa_permit_empty{$k}) {
+					push @double_checks, $capa_permit_empty{$k};
+				}
+			}
+			if (exists $capa{$k}) {
+				# won't catch if the first instance was ignored for an
+				# impermissably empty value; by this point though we
+				# would already have issued a warning and the server
+				# is so fubar that it's not worth worrying about.
+				warn "Protocol violation.  Already seen capability \"$k\".\n" .
+					"Ignoring second instance and continuing.\n";
+				next;
+			}
 			$raw_capabilities{$k} = $v;
 			$capa{$k} = $v;
 			if (exists $capa_dosplit{$k}) {
@@ -255,13 +291,33 @@ sub parse_capabilities
 		} elsif (/^\"([^"]+)\"$/) {
 			$raw_capabilities{$1} = '';
 			$capa{$1} = 1;
-		} elsif (/^NO/) {
+		} elsif (/^NO\b/) {
 			last if exists $_{until_see_no};
 			warn "Unhandled server line: $_\n"
+		} elsif (/^BYE\b(.*)/) {
+			closedie_NOmsg $sock, $1,
+				"Server said BYE when we expected capabilities.\n";
 		} else {
 			warn "Unhandled server line: $_\n"
 		}
 	};
+
+	closedie $sock, "Server does not return SIEVE capability, unable to continue.\n"
+		unless exists $capa{SIEVE};
+	warn "Server does not return IMPLEMENTATION capability.\n"
+		unless exists $capa{IMPLEMENTATION};
+
+	foreach my $check_sub (@double_checks) {
+		$check_sub->($sock, \%capa, \%raw_capabilities);
+	}
+
+	if (grep {lc($_) eq 'enotify'} @{$capa{SIEVE}}) {
+		unless (exists $capa{NOTIFY}) {
+			warn "enotify extension present, NOTIFY capability missing\n" .
+				"This violates MANAGESIEVE specification.\n" .
+				"Continuing anyway.\n";
+		}
+	}
 
 	if (exists $capa{SASL} and $external_first
 			and grep {uc($_) eq 'EXTERNAL'} @{$capa{SASL}}) {
@@ -877,7 +933,7 @@ sub sieve_download
 		warn qq{Empty script "$remotefn"?  Not saved.\n};
 		return;
 	}
-	unless (/^{(\d+)}\r?$/m) {
+	unless (/^{(\d+)\+?}\r?$/m) {
 		die "QUIT:Failed to parse server response to GETSCRIPT";
 	}
 	my $contentdata = $_;
@@ -1150,6 +1206,10 @@ sub sget
 	$dochomp = 0 if defined $_[0] and $_[0] eq '-nochomp';
 	my $l;
 	$l = $sock->getline();
+	unless (defined $l) {
+		debug "... no line read, connection dropped?";
+		die "Connection dropped unexpectedly when trying to read.\n";
+	}
 	if ($l =~ /{(\d+)\+?}\s*\n?\z/) {
 		debug "... literal string response, length $1";
 		my $len = $1;
