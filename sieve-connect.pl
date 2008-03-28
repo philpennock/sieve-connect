@@ -293,7 +293,7 @@ sub parse_capabilities
 			$raw_capabilities{$1} = '';
 			$capa{$1} = 1;
 		} elsif (/^NO\b/) {
-			last if exists $_{until_see_no};
+			return if exists $_{until_see_no};
 			warn "Unhandled server line: $_\n"
 		} elsif (/^BYE\b(.*)/) {
 			closedie_NOmsg $sock, $1,
