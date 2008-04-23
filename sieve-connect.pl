@@ -56,7 +56,14 @@ if ($svn_revision =~ /^.Revision:\s*(\d+)\s*\$\z/) {
 	$svn_revision = '0 because unknown';
 }
 
-use Authen::SASL qw(Perl); # Need a way to ask which mechanism to send
+use Authen::SASL 2.11 qw(Perl);
+# 2.11: first version with non-broken DIGEST-MD5
+#       Earlier versions don't allow server verification
+#       NB: code still explicitly checks for a new-enough version, so
+#           if you have an older version of Authen::SASL and know what you're
+#           doing then you can remove this version check here.  I advise
+#           against it, though.
+# Perl: Need a way to ask which mechanism to send
 use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
 use Cwd qw();
 use Errno;
@@ -507,16 +514,19 @@ if (defined $realm) {
 		# so if it says "okay", we don't keep trying.
 		my $final_auth = decode_base64($1);
 		my $valid = $authconversation->client_step($final_auth);
-		# With released versions of Authen::SASL,
+		# With Authen::SASL before 2.11 (..::Perl 1.06),
 		# Authen::SASL::Perl::DIGEST-MD5 module will complain at this
 		# final step:
 		#   Server did not provide required field(s): algorithm nonce
 		# which is bogus -- it's not required or expected.
-		# NB: at time of writing, Authen::SASL is 2.10 and
-		# Authen::SASL::Perl is 1.05; I've supplied a patch.
+		# Authen::SASL 2.11 fixes this, with ..::Perl 1.06
+		# We explicitly permit silent failure with the security
+		# implications because we require a new enough version of
+		# Authen::SASL at import time above and if someone removes
+		# that check, then on their head be it.
 		if ($authconversation->code()) {
 			my $emsg = $authconversation->error();
-			if ($Authen::SASL::Perl::VERSION > 1.05) {
+			if ($Authen::SASL::Perl::VERSION >= 1.06) {
 				closedie($sock, "SASL Error: $emsg\n");
 			}
 		}
