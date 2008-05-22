@@ -370,14 +370,22 @@ if (exists $capa{STARTTLS}) {
 		}
 	}
 	$forbid_clearauth = 0;
-	# Cyrus sieve might send CAPABILITY after STARTTLS without being
-	# prompted for it.  This breaks the command-response model.
+	# The current protocol spec says that the capability response must
+	# be sent by the server after TLS is established by STARTTLS,
+	# without the client issuing a request.  So after TLS,
+	# server-goes-first.  The historical behaviour of Cyrus timseived
+	# is the inverse; the server waits after TLS for the client to issue
+	# CAPABILITY.  That historical behaviour is still what happens in
+	# the current 'stable' release branch of Cyrus IMAP.
+	# To accommodate both, we need to be able to resynchronise to
+	# reality, so that we can get back to command-response.
 	# We can't just check to see if there's data to read or not, since
 	# that will break if the next data is delayed (race condition).
 	# There is no protocol-compliant method to determine this, short
 	# of "wait a while, see if anything comes along; if not, send
 	# CAPABILITY ourselves".  So, I break protocol by sending the
 	# non-existent command NOOP, then scan for the resulting NO.
+	# This at least is stably deterministic.
 	ssend $sock, "NOOP";
 	parse_capabilities($sock,
 		until_see_no	=> 1,
