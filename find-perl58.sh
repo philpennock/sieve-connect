@@ -11,11 +11,12 @@ p58=''
 for d ; do
 	for n in perl5 perl ; do
 		if [ -x "$d/$n" ]; then
-			min=`perl -le 'print $]' | cut -d . -f 2 | cut -c 1-3`
+			try="$d/$n"
+			min=`"$try" -le 'print $]' | cut -d . -f 2 | cut -c 1-3`
 			min=`echo "$min" | sed 's/^00*//'`
 			expr $min \>= $need_minor >/dev/null 2>&1
 			if [ $? -eq 0 ]; then
-				p58="$d/$n"
+				p58="$try"
 				break 2
 			fi
 		fi
