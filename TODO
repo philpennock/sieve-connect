@@ -19,3 +19,13 @@ Things that sieve-connect would like for xmas.
      that script filenames can be in UTF-8; but then literal quoted strings
      (length prefix) count in octets and there's no character set restriction
      upon those.
+ * Full SASLprep support (*sob*).
+ * Understand quotas.
+ * Use HAVESPACE automatically.
+ * Check server reporting of script errors in PUTSCRIPT.
+ * Support for RENAME extension.
+ * Proper support for the new NOOP extension.  :)
+ * Support for sieve:// URLs, both for specifying server (and for referrals).
+   * sieve:// URL specifying script-name on cmdline should by default download
+     and emit to stdout, unless it's the second parameter and the first is a
+     local file
