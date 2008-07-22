@@ -247,7 +247,8 @@ my %capa_permit_empty = (
 	SASL	=> sub {
 		return if exists $_[1]{STARTTLS};
 		# We die because there's no way to authenticate.
-		# Spec states that after STARTTLS SASL must be non-empty
+		# Spec states "This list can be empty if and only if STARTTLS
+		# is also advertised" (section 1.7).
 		closedie $_[0], "Empty SASL not permitted without STARTTLS\n";
 		},
 	SIEVE	=> undef,
@@ -257,6 +258,7 @@ sub parse_capabilities
 {
 	my $sock = shift;
 	local %_ = @_;
+	# Used under TLS to coerce EXTERNAL auth to be preferred:
 	my $external_first = 0;
 	$external_first = $_{external_first} if exists $_{external_first};
 
@@ -264,10 +266,31 @@ sub parse_capabilities
 	%raw_capabilities = ();
 	%capa = ();
 	while (<$sock>) {
-		received;
+		received unless /^OK\b/;
 		chomp; s/\s*$//;
 		if (/^OK\b/) {
-			last unless exists $_{until_see_no};
+			sget($sock, '-firstline', $_);
+			last unless exists $_{sent_a_noop};
+			# See large comment below in STARTTLS explaining the
+			# resync problem to understand why this is here.
+			my $end_tag = $_{sent_a_noop};
+			unless (defined $end_tag and length $end_tag) {
+				# Default tag in absense of client-specified
+				# tag MUST be NOOP (2.11.2. NOOP Command)
+				$end_tag = 'NOOP';
+			}
+			# Play crude, just look for the tag anywhere in the
+			# response, honouring only word boundaries.  It's our
+			# responsibility to make the tag long enough that this
+			# works without tokenising.
+			if ($_ =~ m/\b\Q${end_tag}\E\b/) {
+				return;
+			}
+			# Okay, that's the "server understands NOOP" case, for
+			# which the server should have advertised the
+			# capability prior to TLS (and so subject to
+			# tampering); we play fast and loose, so have to cover
+			# the NO case below too.
 		} elsif (/^\"([^"]+)\"\s+\"(.*)\"$/) {
 			my ($k, $v) = (uc($1), $2);
 			unless (length $v) {
@@ -300,7 +323,7 @@ sub parse_capabilities
 			$raw_capabilities{$1} = '';
 			$capa{$1} = 1;
 		} elsif (/^NO\b/) {
-			return if exists $_{until_see_no};
+			return if exists $_{sent_a_noop};
 			warn "Unhandled server line: $_\n"
 		} elsif (/^BYE\b(.*)/) {
 			closedie_NOmsg $sock, $1,
@@ -381,14 +404,17 @@ if (exists $capa{STARTTLS}) {
 	# reality, so that we can get back to command-response.
 	# We can't just check to see if there's data to read or not, since
 	# that will break if the next data is delayed (race condition).
-	# There is no protocol-compliant method to determine this, short
+	# There was no protocol-compliant method to determine this, short
 	# of "wait a while, see if anything comes along; if not, send
-	# CAPABILITY ourselves".  So, I break protocol by sending the
+	# CAPABILITY ourselves".  So, I broke protocol by sending the
 	# non-existent command NOOP, then scan for the resulting NO.
-	# This at least is stably deterministic.
-	ssend $sock, "NOOP";
+	# This at least is stably deterministic.  However, from draft 10
+	# onwards, NOOP is a registered available extension which returns
+	# OK.
+	my $noop_tag = "STARTTLS-RESYNC-CAPA";
+	ssend $sock, qq{NOOP "$noop_tag"};
 	parse_capabilities($sock,
-		until_see_no	=> 1,
+		sent_a_noop	=> $noop_tag,
 		external_first => $prioritise_auth_external);
 	unless (scalar keys %capa) {
 		ssend $sock, "CAPABILITY";
@@ -1234,10 +1260,22 @@ sub ssend
 sub sget
 {
 	my $sock = shift;
+	my $l = undef;
 	my $dochomp = 1;
-	$dochomp = 0 if defined $_[0] and $_[0] eq '-nochomp';
-	my $l;
-	$l = $sock->getline();
+	while (@_) {
+		my $t = shift;
+		next unless defined $t;
+		if ($t eq '-nochomp') { $dochomp = 0; next; }
+		if ($t eq '-firstline') {
+			die "Missing sget -firstline parameter"
+				unless defined $_[0];
+			$l = $_[0];
+			shift;
+			next;
+		}
+		die "Unknown sget parameter [$t]";
+	}
+	$l = $sock->getline() unless defined $l;
 	unless (defined $l) {
 		debug "... no line read, connection dropped?";
 		die "Connection dropped unexpectedly when trying to read.\n";
