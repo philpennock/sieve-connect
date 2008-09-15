@@ -275,22 +275,40 @@ sub parse_capabilities
 			# resync problem to understand why this is here.
 			my $end_tag = $_{sent_a_noop};
 			unless (defined $end_tag and length $end_tag) {
-				# Default tag in absense of client-specified
-				# tag MUST be NOOP (2.11.2. NOOP Command)
-				$end_tag = 'NOOP';
+				# In the initial NOOP-featuring draft, #10, we
+				# got back 'NOOP'.  However, this was at odds
+				# with the general syntax rules, so #11/#12
+				# added the TAG response; with this, the
+				# supplied NOOP parameter is returned in the
+				# TAG response, but if there's no parameter
+				# then there's just arbitrary server text.
+				#
+				# So where this used to use a default $end_tag
+				# of 'NOOP', now we declare it a coding error
+				# for this script to pass sent_a_noop without
+				# a value consisting of the tag.
+				closedie $sock, "Internal error: sent_a_noop without tag\n";
 			}
 			# Play crude, just look for the tag anywhere in the
 			# response, honouring only word boundaries.  It's our
 			# responsibility to make the tag long enough that this
 			# works without tokenising.
+			# Really, should check for: OK (TAG <tag-string>) text
+			# where <tag-string> is "$end_tag" or {<len>}\r\n$end_tag
 			if ($_ =~ m/\b\Q${end_tag}\E\b/) {
 				return;
 			}
 			# Okay, that's the "server understands NOOP" case, for
 			# which the server should have advertised the
 			# capability prior to TLS (and so subject to
-			# tampering); we play fast and loose, so have to cover
-			# the NO case below too.
+			# tampering); we play fast and loose, sending NOOP in
+			# all cases, so have to cover the NO case below too;
+			# the known instance of protocol violation we know of
+			# is an older server waiting for client command after
+			# TLS is up.  That server doesn't support NOOP.
+			# Sending NOOP and expecting a NO response for the
+			# unsupported command was the original technique used
+			# by this code.
 		} elsif (/^\"([^"]+)\"\s+\"(.*)\"$/) {
 			my ($k, $v) = (uc($1), $2);
 			unless (length $v) {
@@ -324,12 +342,12 @@ sub parse_capabilities
 			$capa{$1} = 1;
 		} elsif (/^NO\b/) {
 			return if exists $_{sent_a_noop};
-			warn "Unhandled server line: $_\n"
+			warn "Unhandled server line: $_\n";
 		} elsif (/^BYE\b(.*)/) {
 			closedie_NOmsg $sock, $1,
 				"Server said BYE when we expected capabilities.\n";
 		} else {
-			warn "Unhandled server line: $_\n"
+			warn "Unhandled server line: $_\n";
 		}
 	};
 
