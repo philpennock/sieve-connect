@@ -78,6 +78,44 @@ use POSIX qw/ strftime /;
 use Term::ReadKey;
 # interactive mode will attempt to pull in Term::ReadLine too.
 
+my $DEBUGGING = 0;
+
+sub do_version_display {
+	print "${0}: Version $VERSION\n";
+	if ($DEBUGGING) {
+		eval { require 'Authen/SASL/Perl/GSSAPI.pm'; };
+		foreach my $mod (
+			'Authen::SASL',
+			'Authen::SASL::Perl',
+			'Authen::SASL::Perl::GSSAPI',
+			'IO::Socket::INET6',
+			'IO::Socket::SSL',
+			'Term::ReadKey',
+		) {
+			# Authen::SASL -> ${*{$::{"Authen::"}{"SASL::"}{"VERSION"}}{SCALAR}}
+			my @kv = split(/::/, $mod);
+			my $item = \%main::;
+			eval {
+				foreach my $n (@kv) {
+					die "not_here: $n" unless exists $item->{"${n}::"};
+					$item = $item->{"${n}::"};
+				}
+			};
+			if ($@) {
+				if ($@ =~ /^not_here:/) {
+					print "  Module $mod missing\n";
+				} else {
+					die $@;
+				}
+			} else {
+				my $ver = ${*{$item->{"VERSION"}}{SCALAR}};
+				print "  Module $mod Version $ver\n";
+			}
+		}
+	}
+	exit 0;
+}
+
 sub debug;
 sub sent;
 sub ssend;
@@ -88,13 +126,13 @@ sub closedie;
 sub closedie_NOmsg;
 sub die_NOmsg;
 
-my $DEBUGGING = 0;
 my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
+my $opt_version_req = 0;
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -129,9 +167,11 @@ GetOptions(
 	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
-	'version'	=> sub { print "${0}: Version $VERSION\n"; exit 0 },
+	'version'	=> \$opt_version_req, # --version --debug should work
 ) or pod2usage(2);
 # We don't implement HAVESPACE <script> <size>
+
+do_version_display() if $opt_version_req;
 
 if (defined $ARGV[0] and not defined $server) {
 	# sieveshell compatibility.
