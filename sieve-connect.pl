@@ -83,33 +83,28 @@ my $DEBUGGING = 0;
 sub do_version_display {
 	print "${0}: Version $VERSION\n";
 	if ($DEBUGGING) {
-		eval { require 'Authen/SASL/Perl/GSSAPI.pm'; };
-		foreach my $mod (
-			'Authen::SASL',
-			'Authen::SASL::Perl',
+		my @do_require = (
 			'Authen::SASL::Perl::GSSAPI',
-			'IO::Socket::INET6',
-			'IO::Socket::SSL',
-			'Term::ReadKey',
-		) {
-			# Authen::SASL -> ${*{$::{"Authen::"}{"SASL::"}{"VERSION"}}{SCALAR}}
-			my @kv = split(/::/, $mod);
-			my $item = \%main::;
-			eval {
-				foreach my $n (@kv) {
-					die "not_here: $n" unless exists $item->{"${n}::"};
-					$item = $item->{"${n}::"};
-				}
-			};
-			if ($@) {
-				if ($@ =~ /^not_here:/) {
-					print "  Module $mod missing\n";
-				} else {
-					die $@;
-				}
-			} else {
-				my $ver = ${*{$item->{"VERSION"}}{SCALAR}};
+			'Term::ReadLine',
+		);
+		foreach my $r (@do_require) {
+			(my $rr = $r) =~ s,::,/,g;
+			eval { require "$rr.pm" };
+		}
+		foreach my $mod (
+				'Authen::SASL',
+				'Authen::SASL::Perl',
+				'IO::Socket::INET6',
+				'IO::Socket::SSL',
+				'Term::ReadKey',
+				@do_require) {
+			my $vname = "${mod}::VERSION";
+			my $ver;
+			eval { no strict 'refs'; $ver = ${$vname} };
+			if (defined $ver) {
 				print "  Module $mod Version $ver\n";
+			} else {
+				print "  Module $mod -- no version number available\n";
 			}
 		}
 	}
@@ -126,6 +121,7 @@ sub closedie;
 sub closedie_NOmsg;
 sub die_NOmsg;
 
+my $DEBUGGING_SASL = 0;
 my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
@@ -156,6 +152,7 @@ GetOptions(
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
+	"debugsasl"	=> \$DEBUGGING_SASL,
 	"dumptlsinfo|dumpsslinfo"	=> \$dump_tls_information,
 	# option names can be short-circuited, $action is complete:
 	"upload"	=> sub { $action = 'upload' },
@@ -475,11 +472,34 @@ if (exists $capa{STARTTLS}) {
 	# This at least is stably deterministic.  However, from draft 10
 	# onwards, NOOP is a registered available extension which returns
 	# OK.
-	my $noop_tag = "STARTTLS-RESYNC-CAPA";
-	ssend $sock, qq{NOOP "$noop_tag"};
-	parse_capabilities($sock,
-		sent_a_noop	=> $noop_tag,
-		external_first => $prioritise_auth_external);
+	#
+	# New problem: again, Cyrus timsieved.  As of 2.3.13, it drops the
+	# connection for an unknown command instead of returning NO.  And
+	# logs "Lost connection to client -- exiting" which is an interesting
+	# way of saying "we dropped the connection".  At this point, I give up
+	# on protocol-deterministic checks and fall back to version checking.
+	# Alas, Cyrus 2.2.x is still widely deployed because 2.3.x is the
+	# development series and 2.2.x is officially the stable series.
+	# This means that if they don't support NOOP by 2.3.14, I have to
+	# figure out how to decide what is safe and backtrack which version
+	# precisely was the first to send the capability response correctly.
+	my $use_noop = 1;
+	if (exists $capa{"IMPLEMENTATION"} and
+		$capa{"IMPLEMENTATION"} eq "Cyrus timsieved v2.3.13") {
+		debug("--- Cyrus drops connection with dubious log msg if send NOOP, skip that");
+		$use_noop = 0;
+	}
+
+	if ($use_noop) {
+		my $noop_tag = "STARTTLS-RESYNC-CAPA";
+		ssend $sock, qq{NOOP "$noop_tag"};
+		parse_capabilities($sock,
+			sent_a_noop	=> $noop_tag,
+			external_first	=> $prioritise_auth_external);
+	} else {
+		parse_capabilities($sock,
+			external_first	=> $prioritise_auth_external);
+	}
 	unless (scalar keys %capa) {
 		ssend $sock, "CAPABILITY";
 		parse_capabilities($sock,
@@ -490,7 +510,7 @@ if (exists $capa{STARTTLS}) {
 }
 
 my %authen_sasl_params;
-if ($DEBUGGING) {
+if ($DEBUGGING_SASL) {
 	$authen_sasl_params{debug} = 15;
 }
 $authen_sasl_params{callback}{user} = $user;
@@ -1511,9 +1531,13 @@ people think about names in the local filesystem.  There is no default
 script name.
 
 The B<--debug> option turns on diagnostic traces.
+The B<--debugsasl> option asks the SASL library for debugging.
 The B<--dumptlsinfo> shows the TLS (SSL) peer information; if specified
 together with B<--debug> then the server's PEM certificate will be
 provided as debug trace.
+
+The B<--version> option shows version information.
+When combined with B<--debug> it will show implementation dependency versions.
 
 The server can be a host or IP address, IPv4 or IPv6;
 the default is C<$IMAP_SERVER> from the environment (if it's not a
