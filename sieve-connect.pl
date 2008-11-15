@@ -430,6 +430,8 @@ sub parse_capabilities
 }
 parse_capabilities $sock;
 
+my $tls_bitlength = -1;
+
 if (exists $capa{STARTTLS}) {
 	ssend $sock, "STARTTLS";
 	sget $sock;
@@ -438,7 +440,11 @@ if (exists $capa{STARTTLS}) {
 		my $e = IO::Socket::SSL::errstr();
 		die "STARTTLS promotion failed: $e\n";
 	};
-	debug("--- TLS activated here");
+	if (exists $main::{"Net::"} and exists $main::{"Net::"}{"SSLeay::"}) {
+		my $t = Net::SSLeay::get_cipher_bits($sock->_get_ssl_object(), 0);
+		$tls_bitlength = $t if defined $t and $t;
+	}
+	debug("--- TLS activated here [$tls_bitlength bits]");
 	if ($dump_tls_information) {
 		print $sock->dump_peer_certificate();
 		if ($DEBUGGING and
@@ -484,6 +490,9 @@ if (exists $capa{STARTTLS}) {
 }
 
 my %authen_sasl_params;
+if ($DEBUGGING) {
+	$authen_sasl_params{debug} = 15;
+}
 $authen_sasl_params{callback}{user} = $user;
 if (defined $authzid) {
 	$authen_sasl_params{callback}{authname} = $authzid;
@@ -534,6 +543,9 @@ my $secflags = 'noanonymous';
 $secflags .= ' noplaintext' if $forbid_clearauth;
 my $authconversation = $sasl->client_new('sieve', $server, $secflags)
 	or die "SASL conversation init failed (local problem): $!\n";
+if ($tls_bitlength > 0) {
+	$authconversation->property(externalssf => $tls_bitlength);
+}
 if (defined $realm) {
 	$authconversation->property(realm => $realm);
 }
