@@ -867,13 +867,14 @@ if (defined $execscript) {
 				sub { complete_rl_sieve($term, $sock, @_) };
 			$term->Attribs->{completer_quote_characters} = '"';
 			$term->Attribs->{filename_quote_characters} = " \t";
+			$term->call_function('display-readline-version') if $DEBUGGING;
 		}
 		$cmdlineget_func = sub { return $term->readline('> ') };
 		print STDERR "ReadLine support enabled.\n";
 	};
 	unless (defined $cmdlineget_func) {
 		$cmdlineget_func = sub {
-			print "> "; $| = 1;
+			print "> "; local $| = 1;
 			my $l = <STDIN>;
 			return $l;
 		};
