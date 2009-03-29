@@ -485,7 +485,8 @@ if (exists $capa{STARTTLS}) {
 	# precisely was the first to send the capability response correctly.
 	my $use_noop = 1;
 	if (exists $capa{"IMPLEMENTATION"} and
-		$capa{"IMPLEMENTATION"} eq "Cyrus timsieved v2.3.13") {
+		$capa{"IMPLEMENTATION"} =~ /^Cyrus timsieved v2\.3\.(\d+)\z/ and
+		$1 >= 13) {
 		debug("--- Cyrus drops connection with dubious log msg if send NOOP, skip that");
 		$use_noop = 0;
 	}
