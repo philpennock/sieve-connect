@@ -68,6 +68,7 @@ use Authen::SASL::Perl::EXTERNAL; # We munge inside its private stuff.
 use Cwd qw();
 use Errno;
 use File::Basename qw();
+use File::Spec;
 use Getopt::Long;
 use IO::File;
 use IO::Socket::INET6;
@@ -807,6 +808,23 @@ my %subst_patterns = (
 );
 
 # ######################################################################
+# Fix-up for optional stuff, where missing modules disable functionality.
+
+my $have_needed_man_mods;
+BEGIN {
+	eval {
+		my $mod = 'Pod::Simple::Text';
+		my $mp = File::Spec->catfile(split(/::/, $mod));
+		require "$mp.pm";
+		import Pod::Simple::Text;
+		$have_needed_man_mods = 1;
+	};
+}
+unless ($have_needed_man_mods) {
+	delete $sieve_commands{'man'};
+}
+
+# ######################################################################
 # Do something
 
 # Handle the case where everything is on the command-line.  No aliases
@@ -1212,16 +1230,19 @@ sub aux_help
 		print "\n";
 		if (exists $aliases{$c}) {
 			print $indentspace, 'aka: ',
-				join(' ', @{$aliases{$c}}), "\n";
+				join(' ', sort @{$aliases{$c}}), "\n";
 		}
 	}
 }
 
 sub aux_man
 {
-	use Pod::Text;
+	unless ($have_needed_man_mods) {
+		print STDERR "Sorry, you're missing modules we need\n";
+		return;
+	}
 	seek DATA, $DATASTART, 0;
-	my $parser = Pod::Text->new();
+	my $parser = Pod::Simple::Text->new();
 	$parser->no_whining(1);
 	$parser->output_fh(*STDOUT);
 	$parser->parse_file(*DATA);
@@ -1627,6 +1648,7 @@ Phil Pennock E<lt>phil-perl@spodhuis.orgE<gt> is guilty, m'Lud.
 
 Perl.  F<Authen::SASL>.  F<IO::Socket::INET6>.
 F<IO::Socket::SSL> (at least version 0.97).  F<Pod::Usage>.
+F<Pod::Simple::Text> for built-in man command (optional).
 F<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
 F<Term::ReadLine> will significantly improve interactive mode.
