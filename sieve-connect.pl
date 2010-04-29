@@ -33,6 +33,7 @@
 use warnings;
 use strict;
 
+# These are the defaults, some may be overriden on the command-line.
 my %ssl_options = (
 	SSL_version	=> 'TLSv1',
 	SSL_cipher_list	=> 'ALL:!aNULL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
@@ -148,6 +149,7 @@ GetOptions(
 	"clientkey=s"	=> \$sslkeyfile,
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
+	"notlsverify|nosslverify" => sub { $ssl_options{'SSL_verify_mode'} = 0x00 },
 	"noclearauth"	=> \$forbid_clearauth,
 	"noclearchan"	=> sub { $forbid_clearauth = $forbid_clearchan = 1 },
 	"4"		=> sub { $net_domain = AF_INET },
@@ -1510,8 +1512,8 @@ sieve-connect - managesieve command-line client
                [--server <hostname>] [--port <portspec>] [--4|--6]
 	       [--user <authentication_id>] [--authzid <authzid>]
 	       [--realm <realm>] [--passwordfd <n>]
-	       [--clientkey <file> --clientcert <file>]|
-	        [--clientkeycert <file>]
+	       [--clientkey <file> --clientcert <file>]|[--clientkeycert <file>]
+	       [--notlsverify|--nosslverify]
 	       [--noclearauth] [--noclearchan]
 	       [--authmech <mechanism>]
 	       [--upload|--download|--list|--delete|
@@ -1582,6 +1584,11 @@ the password can be read from.
 Everything until the newline before EOF is the password,
 so it can contain embedded newlines.  Do not provide passwords on a
 command-line or in a process environment.
+
+If you are willing to accept the risk of man-in-the-middle active attacks
+and you are unable to arrange for the relevant Certificate Authority
+certificate to be available, then you can lower your safety with the
+B<--notlsverify> option, also spelt B<--nosslverify>.
 
 For SSL client certificate authentication, either B<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
