@@ -36,7 +36,7 @@ use strict;
 # If you can't update /etc/services to contain an entry for 'sieve' and you're
 # not using 4190 (specified in RFC 5804) then you might want to change the
 # default port-number in the parentheses here:
-my $port = 'sieve(4190)';
+my $DEFAULT_PORT = 'sieve(4190)';
 
 # These are the defaults, some may be overriden on the command-line.
 my %ssl_options = (
@@ -80,6 +80,7 @@ use IO::File;
 use IO::Socket::INET6;
 use IO::Socket::SSL 0.97; # SSL_ca_path bogus before 0.97
 use MIME::Base64;
+use Net::DNS;
 use Pod::Usage;
 use POSIX qw/ strftime /;
 use Term::ReadKey;
@@ -132,11 +133,13 @@ my $DEBUGGING_SASL = 0;
 my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
+my $port = undef;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
 my $opt_version_req = 0;
 my $ignore_server_version = 0;
+my $no_srv = 0;
 my ($server, $realm);
 my $net_domain = AF_UNSPEC;
 my $action = 'command-loop';
@@ -146,6 +149,7 @@ GetOptions(
 	"remotesieve=s"	=> \$remotesievename,
 	"server|s=s"	=> \$server,
 	"port|p=s"	=> \$port, # not num, allow service names
+	"nosrv"		=> \$no_srv,
 	"user|u=s"	=> \$user,
 	"realm|r=s"	=> \$realm,
 	"authzid|authname|a=s"	=> \$authzid, # authname for sieveshell compat
@@ -207,8 +211,10 @@ unless (defined $server) {
 
 die "Bad server name\n"
 	unless $server =~ /^[A-Za-z0-9_.:-]+\z/;
-die "Bad port specification\n"
-	unless $port =~ /^[A-Za-z0-9_()-]+\z/;
+if (defined $port) {
+	die "Bad port specification\n"
+		unless $port =~ /^[A-Za-z0-9_()-]+\z/;
+}
 
 unless (defined $user) {
 	if ($^O eq "MSWin32") {
@@ -264,20 +270,69 @@ if ($action eq 'deactivate' and defined $remotesievename) {
 # ######################################################################
 # Start work; connect, start TLS, authenticate
 
-my $sock = IO::Socket::INET6->new(
-	PeerHost	=> $server,
-	PeerPort	=> $port,
-	Proto		=> 'tcp',
-	Domain		=> $net_domain,
-	MultiHomed	=> 1, # try multiple IPs (IPv4 works, v6 doesn't?)
-);
-unless (defined $sock) {
-	my $extra = '';
-	if ($!{EINVAL} and $net_domain != AF_UNSPEC) {
-	  $extra = " (Probably no host record for overriden IP version)\n";
+my @host_port_pairs;
+
+# Find the real hostname to connect to.
+unless ($no_srv) {
+	my $res = Net::DNS::Resolver->new();
+	my $query = $res->query("_sieve._tcp.$server", 'SRV');
+	my @srv_recs;
+	if ($query) {
+		foreach my $rr ($query->answer) {
+			next unless $rr->type eq 'SRV';
+			push @srv_recs, $rr;
+		}
 	}
-	die qq{Connection to "$server" [port $port] failed: $!\n$extra};
+	if (@srv_recs) {
+		@srv_recs = Net::DNS::rrsort('SRV', '', @srv_recs);
+		my $old = "[$server]:" . (defined $port ? $port : $DEFAULT_PORT);
+		debug "dns: SRV results found for: $old";
+		foreach my $rr (@srv_recs) {
+			push @host_port_pairs, [$rr->target, $rr->port];
+		}
+	}
+
 }
+
+$port = $DEFAULT_PORT unless defined $port;
+unless (@host_port_pairs) {
+	push @host_port_pairs, [$server, $port];
+}
+my $sock = undef;
+
+# Yes, this used to just try one connection and the list of candidates was
+# bolted on; how could you tell?
+
+foreach my $hp (@host_port_pairs) {
+	my $host_candidate = $hp->[0];
+	my $port_candidate = $hp->[1];
+	debug "connection: trying <[$host_candidate]:$port_candidate>";
+	my $s = IO::Socket::INET6->new(
+		PeerHost	=> $host_candidate,
+		PeerPort	=> $port_candidate,
+		Proto		=> 'tcp',
+		Domain		=> $net_domain,
+		MultiHomed	=> 1, # try multiple IPs (IPv4 works, v6 doesn't?)
+	);
+	unless (defined $s) {
+		my $extra = '';
+		if ($!{EINVAL} and $net_domain != AF_UNSPEC) {
+		  $extra = " (Probably no host record for overriden IP version)\n";
+		}
+		warn qq{Connection to <[$host_candidate]:$port_candidate> failed: $!\n$extra};
+		next;
+	}
+	unless ($s->peerhost()) {
+		# why am I seeing successful returns for unconnected sockets? *sigh*
+		warn qq{Connection to <[$host_candidate]:$port_candidate> failed.\n};
+		next;
+	}
+	$sock = $s;
+	$server = $host_candidate;
+	$port = $port_candidate;
+	last;
+}
+exit(1) unless defined $sock;
 
 $sock->autoflush(1);
 debug "connection: remote host address is [@{[$sock->peerhost()]}] " .
@@ -1654,6 +1709,9 @@ else F<localhost>.
 The port can be any Perl port specification, default is F<sieve(4190)>.
 The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
+By default, the server is taken to be a domain, for which SRV records are
+looked up; use B<--nosrv> to inhibit SRV record lookup.
+
 The B<--user> option will be required unless you're on a Unix system
 with getpwuid() available and your Cyrus account name matches your system
 account name.  B<--authmech> can be used to force a particular authentication
@@ -1729,7 +1787,13 @@ port 2000 and do not have an /etc/services entry, updating to/beyond release
 0.75 of this tool will break invocations which do not specify a port.  The
 specification of the default port was moved to the user-configurable section
 at the top of the script and administrators may wish to override the shipped
-default.
+default.  You can bypass all of this mess by publishing SRV records,
+per RFC5804.
+
+The Net::DNS Perl module does not (at time of writing) provide full support for
+weighted prioritised SRV records and I have not made any effort to fix this;
+whatever the default sort algorithm provides for SRV is what is used for
+ordering.
 
 =head1 NON-BUGS
 
@@ -1752,6 +1816,7 @@ Phil Pennock E<lt>phil-perl@spodhuis.orgE<gt> is guilty, m'Lud.
 
 Perl.  F<Authen::SASL>.  F<IO::Socket::INET6>.
 F<IO::Socket::SSL> (at least version 0.97).  F<Pod::Usage>.
+F<Net::DNS> for SRV lookup.
 F<Pod::Simple::Text> for built-in man command (optional).
 F<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
