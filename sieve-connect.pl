@@ -131,6 +131,7 @@ my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
 my $opt_version_req = 0;
+my $ignore_server_version = 0;
 my ($server, $realm);
 my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
@@ -157,6 +158,7 @@ GetOptions(
 	"debug"		=> \$DEBUGGING,
 	"debugsasl"	=> \$DEBUGGING_SASL,
 	"dumptlsinfo|dumpsslinfo"	=> \$dump_tls_information,
+	"ignoreserverversion"	=> \$ignore_server_version,
 	# option names can be short-circuited, $action is complete:
 	"upload"	=> sub { $action = 'upload' },
 	"download"	=> sub { $action = 'download' },
@@ -164,6 +166,7 @@ GetOptions(
 	"delete"	=> sub { $action = 'delete' },
 	"activate"	=> sub { $action = 'activate' },
 	"deactivate"	=> sub { $action = 'deactivate' },
+	"checkscript"   => sub { $action = 'checkscript' },
 	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
@@ -199,7 +202,7 @@ unless (defined $server) {
 }
 
 die "Bad server name\n"
-	unless $server =~ /^[A-Za-z0-9_.-]+\z/;
+	unless $server =~ /^[A-Za-z0-9_.:-]+\z/;
 die "Bad port specification\n"
 	unless $port =~ /^[A-Za-z0-9_()-]+\z/;
 
@@ -237,7 +240,7 @@ if (defined $localsievename and not defined $remotesievename) {
 	$remotesievename = $localsievename;
 }
 
-if (defined $localsievename and $action eq 'upload') {
+if (defined $localsievename and $action =~ /upload|checkscript/) {
 	-r $localsievename or die "unable to read \"$localsievename\": $!\n";
 }
 if ($action eq 'download' and not defined $localsievename) {
@@ -632,7 +635,7 @@ if (defined $realm) {
 	}
 
 	if (/^NO((?:\s.*)?)$/) {
-		closedie_NOmsg($sock, $1, "Authentication refused by server");
+		closedie_NOmsg($sock, $1, "Authentication refused by server\n");
 	}
 	if (/^OK\s+\(SASL\s+\"([^"]+)\"\)$/) {
 		# This _should_ be present with server-verification steps which
@@ -659,7 +662,7 @@ if (defined $realm) {
 			}
 		}
 		if (defined $valid and length $valid) {
-			closedie($sock, "Server failed final verification [$valid]");
+			closedie($sock, "Server failed final verification [$valid]\n");
 		}
 	}
 
@@ -674,6 +677,7 @@ sub sieve_activate;
 sub sieve_delete;
 sub sieve_download;
 sub sieve_upload;
+sub sieve_checkscript;
 sub localfs_ls;
 sub localfs_chpwd;
 sub localfs_pwd;
@@ -698,6 +702,8 @@ sub tilde_expand ; # don't apply to cmdline params as shell does it for us
 # param list numbering: 1=first param, ...
 # 'remote_name' => if there's a remote name, which position it comes
 # 'local_name' => if there's a local name, which position it comes
+# 'min_version' => require server to advertise this version for support
+#                  (undef => "advertises VERSION capability")
 my %sieve_commands = (
 	help	=> { routine => \&aux_help, params => 0, help => 'this help' },
 	'?'	=> { alias => 'help' },
@@ -763,6 +769,14 @@ my %sieve_commands = (
 		local_name => 1,
 		remote_name => 2,
 	},
+	checkscript  => {
+		routine => \&sieve_checkscript,
+		help => '<filename> -- check script on the server',
+		action => 1,
+		params => 1,
+		local_name => 1,
+		min_version => undef,
+	},
 	put	=> { alias => 'upload' },
 	download => {
 		routine => \&sieve_download,
@@ -824,6 +838,42 @@ BEGIN {
 }
 unless ($have_needed_man_mods) {
 	delete $sieve_commands{'man'};
+}
+
+# ######################################################################
+# Fix-up for features missing in this server
+
+unless ($ignore_server_version) {
+	# If server does not advertise VERSION, it's missing certain features;
+	# if it does, we can do min_version checks.
+	# If our min_version is undef, we simply require any VERSION
+	# RFC5804 defines VERSION as just a string "1.0" and says nothing
+	# about comparison.  So for the time being, we'll go on "must look like
+	# a number, optionally with a dot in it, and compares with Perl's
+	# numerical operator" as a good-enough approach to predict the future.
+	my $have_server_version = undef;
+	if (exists $capa{VERSION}) {
+		closedie($sock, "Unparsed server version [$capa{VERSION}]\n")
+			unless $capa{VERSION} =~ /^[0-9]+(?:\.[0-9]+)?\z/;
+		$have_server_version = $capa{VERSION};
+	};
+
+	my @kl = keys %sieve_commands;
+	foreach my $k (@kl) {
+		next unless exists $sieve_commands{$k}{min_version};
+		my $min = $sieve_commands{$k}{min_version};
+		unless (defined $have_server_version) {
+			delete $sieve_commands{$k};
+			next;
+		}
+		unless (defined $min) {
+			next;
+		}
+		if ($min > $have_server_version) {
+			delete $sieve_commands{$k};
+			next;
+		}
+	}
 }
 
 # ######################################################################
@@ -1159,6 +1209,33 @@ sub sieve_upload
 
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "PUTSCRIPT($remotefn) failed: $_\n";
+	}
+}
+
+sub sieve_checkscript
+{
+	my ($sock, $localfn) = @_; splice @_, 0, 2;
+	die "QUIT:Internal error, check missing localfn\n"
+	    unless defined $localfn;
+
+	# I'm going to assume that any Sieve script will easily fit in memory.
+	# Since Cyrus enforces admin-specified size constraints, this is
+	# probably pretty safe.
+	my $fh = new IO::File tilde_expand($localfn), '<'
+		or die "aborting, read-open($localfn) failed: $!\n";
+	my @scriptlines = $fh->getlines();
+	$fh->close() or die "aborting, read-close($localfn failed: $!\n";
+
+	my $len = 0;
+	$len += length foreach @scriptlines;
+
+	ssend $sock, "CHECKSCRIPT {${len}+}";
+	ssend $sock, '-noeol', @scriptlines;
+	ssend $sock, '';
+	sget $sock;
+
+	unless (/^OK((?:\s.*)?)$/) {
+		warn "CHECKSCRIPT failed: $_\n";
 	}
 }
 
@@ -1516,7 +1593,8 @@ sieve-connect - managesieve command-line client
 	       [--notlsverify|--nosslverify]
 	       [--noclearauth] [--noclearchan]
 	       [--authmech <mechanism>]
-	       [--upload|--download|--list|--delete|
+	       [--ignoreserverversion]
+	       [--upload|--download|--list|--delete|--check
 	        --activate|--deactivate]|[--exec <script>]
 	       [--help|--man]
 
@@ -1599,6 +1677,9 @@ The B<--noclearauth> option will prevent use of cleartext authentication
 mechanisms unless protected by TLS.  The B<--noclearchan> option will
 mandate use of some confidentiality layer; at this time only TLS is
 supported.
+
+By default, the server's "VERSION" capability will be used to filter the
+commands available.  Use B<--ignoreserverversion> to prevent this.
 
 The remaining options denote actions.  One, and only one, action may be
 present.  If no action is present, the interactive mode is entered.
