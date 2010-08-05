@@ -33,6 +33,11 @@
 use warnings;
 use strict;
 
+# If you can't update /etc/services to contain an entry for 'sieve' and you're
+# not using 4190 (specified in RFC 5804) then you might want to change the
+# default port-number in the parentheses here:
+my $port = 'sieve(4190)';
+
 # These are the defaults, some may be overriden on the command-line.
 my %ssl_options = (
 	SSL_version	=> 'TLSv1',
@@ -133,7 +138,6 @@ my $dump_tls_information = 0;
 my $opt_version_req = 0;
 my $ignore_server_version = 0;
 my ($server, $realm);
-my $port = 'sieve(2000)';
 my $net_domain = AF_UNSPEC;
 my $action = 'command-loop';
 my $execscript;
@@ -276,7 +280,8 @@ unless (defined $sock) {
 }
 
 $sock->autoflush(1);
-debug "connection: remote host address is @{[$sock->peerhost()]}";
+debug "connection: remote host address is [@{[$sock->peerhost()]}] " .
+	"port [@{[$sock->peerport()]}]";
 
 my %capa;
 my %raw_capabilities;
@@ -1646,7 +1651,7 @@ The server can be a host or IP address, IPv4 or IPv6;
 the default is C<$IMAP_SERVER> from the environment (if it's not a
 unix-domain socket path) with any port specificaion stripped off,
 else F<localhost>.
-The port can be any Perl port specification, default is F<sieve(2000)>.
+The port can be any Perl port specification, default is F<sieve(4190)>.
 The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
 The B<--user> option will be required unless you're on a Unix system
@@ -1714,6 +1719,17 @@ mean that some linebreaks are special.  Hopefully no server will do this.
 If B<sieve-connect> fails to connect to an IPv4 server without the B<-4>
 option being explicitly passed, then you've encountered a portability
 issue in the F<IO::Socket::INET6> Perl library and need to upgrade that.
+
+Most historical implementations used port 2000 for ManageSieve.  RFC5804
+allocates port 4190.  This tool uses a port-spec of "sieve(4190)" as the
+default port, which means that an /etc/services (or substitute) entry for
+"sieve" as a TCP service takes precedence, but if that is not present, to
+assume 4190 as the default.  This change means that if you're still using
+port 2000 and do not have an /etc/services entry, updating to/beyond release
+0.75 of this tool will break invocations which do not specify a port.  The
+specification of the default port was moved to the user-configurable section
+at the top of the script and administrators may wish to override the shipped
+default.
 
 =head1 NON-BUGS
 
