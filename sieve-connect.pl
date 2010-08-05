@@ -34,8 +34,9 @@ use warnings;
 use strict;
 
 # If you can't update /etc/services to contain an entry for 'sieve' and you're
-# not using 4190 (specified in RFC 5804) then you might want to change the
-# default port-number in the parentheses here:
+# not using 4190 (specified in RFC 5804) and you're not publishing an SRV
+# record, then you might want to change the default port-number in the
+# parentheses here:
 my $DEFAULT_PORT = 'sieve(4190)';
 
 # These are the defaults, some may be overriden on the command-line.
@@ -1811,6 +1812,11 @@ and deliberately designed to be compatible with sieveshell.
 =head1 AUTHOR
 
 Phil Pennock E<lt>phil-perl@spodhuis.orgE<gt> is guilty, m'Lud.
+
+There is a low-volume announcement list for new releases; the web interface is
+at L<http://mail.globnix.net/mailman/listinfo/sieve-connect-announce> or you
+can send mail,
+L<mailto:sieve-connect-announce-request@spodhuis.org?subject=subscribe>
 
 =head1 PREREQUISITES
 

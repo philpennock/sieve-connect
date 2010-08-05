@@ -1,11 +1,5 @@
 Things that sieve-connect would like for xmas.
 
- * A final published specification to work against
-   * A noop command would be good, to help clients work around the ambiguity
-     in whether servers do or don't send a capability response automatically;
-     this breaks the lockstep model and would require an event-driven engine
-     to work around, which is too much for a client designed to be small and
-     simple.  We hack around it by sending NOOP and expecting a NO response.
  * A full test-suite to torture the client.
  * Support for referrals
    * A server which does this so it can be tested
@@ -29,3 +23,12 @@ Things that sieve-connect would like for xmas.
    * sieve:// URL specifying script-name on cmdline should by default download
      and emit to stdout, unless it's the second parameter and the first is a
      local file
+ * Time to pick through RFC 5804 in detail and find what else we're missing.
+
+
+Things we got because Santa is generous:
+
+ * a published specifcation!  RFC 5804.
+ * NOOP, to help clients work around the ambiguity in whether servers do or
+   don't send a capability response automatically, which broke the lockstep
+   model of the protocol.
