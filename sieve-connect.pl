@@ -105,6 +105,7 @@ sub do_version_display {
 				'Authen::SASL::Perl',
 				'IO::Socket::INET6',
 				'IO::Socket::SSL',
+				'Net::DNS',
 				'Term::ReadKey',
 				@do_require) {
 			my $vname = "${mod}::VERSION";
