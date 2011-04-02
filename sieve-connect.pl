@@ -4,7 +4,7 @@
 #
 # timsieved client script
 #
-# Copyright © 2006-2010 Phil Pennock.  All rights reserved.
+# Copyright © 2006-2011 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -1663,7 +1663,7 @@ sieve-connect - managesieve command-line client
 =head1 DESCRIPTION
 
 B<sieve-connect> is a client for the C<MANAGESIEVE> protocol, which is
-an Internet Draft protocol for manipulation of C<Sieve> scripts in a
+an RFC-specified protocol for manipulation of C<Sieve> scripts in a
 repository.
 More simply, B<sieve-connect> lets you control your mail-filtering
 rule files on a mail server.
@@ -1796,6 +1796,9 @@ The Net::DNS Perl module does not (at time of writing) provide full support for
 weighted prioritised SRV records and I have not made any effort to fix this;
 whatever the default sort algorithm provides for SRV is what is used for
 ordering.
+
+Probably need to sit down and work through the final RFC and see if any
+functionality is still missing.
 
 =head1 NON-BUGS
 
