@@ -500,7 +500,7 @@ my $tls_bitlength = -1;
 if (exists $capa{STARTTLS}) {
 	ssend $sock, "STARTTLS";
 	sget $sock;
-	die "STARTTLS request rejected: $_\n" unless /^OK\s+\"/;
+	die "STARTTLS request rejected: $_\n" unless /^OK\b/;
 	IO::Socket::SSL->start_SSL($sock, %ssl_options) or do {
 		my $e = IO::Socket::SSL::errstr();
 		die "STARTTLS promotion failed: $e\n";
