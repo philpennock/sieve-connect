@@ -4,7 +4,7 @@
 #
 # timsieved client script
 #
-# Copyright © 2006-2011 Phil Pennock.  All rights reserved.
+# Copyright © 2006-2012 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -40,8 +40,11 @@ use strict;
 my $DEFAULT_PORT = 'sieve(4190)';
 
 # These are the defaults, some may be overriden on the command-line.
+# Note that SSLv23_client_method in OpenSSL is the *only* one which can
+# negotiate multiple protocols, so even to choose TLS v1.0/v1.1/v1.2, you
+# must still specify SSLv23 and then cancel the undesired protocols.
 my %ssl_options = (
-	SSL_version	=> 'TLSv1',
+	SSL_version	=> 'SSLv23:!SSLv2:!SSLv3',
 	SSL_cipher_list	=> 'ALL:!aNULL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
 	SSL_verify_mode	=> 0x01,
 	SSL_ca_path	=> '/etc/ssl/certs',
@@ -50,6 +53,8 @@ my %ssl_options = (
 my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
 
 my @cmd_localfs_ls = qw( ls -C );
+
+my $SEARCH_FOR_CERTS_DIR_IF_NEEDED = 1;
 
 # ######################################################################
 # No user-serviceable parts below
@@ -130,6 +135,7 @@ sub received;
 sub closedie;
 sub closedie_NOmsg;
 sub die_NOmsg;
+sub fixup_ssl_configuration;
 
 my $DEBUGGING_SASL = 0;
 my $DATASTART = tell DATA;
@@ -185,6 +191,8 @@ GetOptions(
 # We don't implement HAVESPACE <script> <size>
 
 do_version_display() if $opt_version_req;
+
+fixup_ssl_configuration();
 
 if (defined $ARGV[0] and not defined $server) {
 	# sieveshell compatibility.
@@ -1632,6 +1640,25 @@ sub tilde_expand
 # don't be context-sensitive unless asked for, as it's more useful in
 # IO::File constructors this way.
 	return ($more and wantarray) ? ($path, $tilded, $home) : $path;
+}
+
+sub fixup_ssl_configuration {
+	return unless $SEARCH_FOR_CERTS_DIR_IF_NEEDED;
+	return if -d $ssl_options{'SSL_ca_path'};
+	debug "Need to find SSL_ca_path, trying to ask openssl";
+	my $found = 0;
+	local *_;
+	open(VERSION, '-|', 'openssl', 'version', '-d');
+	foreach (<VERSION>) {
+		next unless /^OPENSSLDIR: "(.+)"\s*$/;
+		$ssl_options{'SSL_ca_path'} = File::Spec->catdir($1, 'certs');
+		$found = 1;
+		last;
+	}
+	close(VERSION);
+	debug($found
+		? "Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}"
+		: "Unable to get system SSL_ca_path");
 }
 
 # ######################################################################
