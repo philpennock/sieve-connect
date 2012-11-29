@@ -143,6 +143,7 @@ my $localsievename;
 my $remotesievename;
 my $port = undef;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
+my ($tlscapath, $tlscafile);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
 my $opt_version_req = 0;
@@ -167,6 +168,8 @@ GetOptions(
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
 	"notlsverify|nosslverify" => sub { $ssl_options{'SSL_verify_mode'} = 0x00 },
+	"tlscapath=s"	=> \$tlscapath,
+	"tlscafile=s"	=> \$tlscafile,
 	"noclearauth"	=> \$forbid_clearauth,
 	"noclearchan"	=> sub { $forbid_clearauth = $forbid_clearchan = 1 },
 	"4"		=> sub { $net_domain = AF_INET },
@@ -190,6 +193,12 @@ GetOptions(
 ) or pod2usage(2);
 # We don't implement HAVESPACE <script> <size>
 
+if (defined $tlscafile) {
+	$ssl_options{'SSL_ca_file'} = $tlscafile;
+	delete $ssl_options{'SSL_ca_path'};
+} elsif (defined $tlscapath) {
+	$ssl_options{'SSL_ca_path'} = $tlscapath;
+}
 do_version_display() if $opt_version_req;
 
 fixup_ssl_configuration();
@@ -506,6 +515,12 @@ parse_capabilities $sock;
 my $tls_bitlength = -1;
 
 if (exists $capa{STARTTLS}) {
+	debug("-T- will use TLS certs from " .
+		( exists $ssl_options{'SSL_ca_file'} ? "file" : "directory" ) .
+		" \"" .
+		( exists $ssl_options{'SSL_ca_file'}
+			? $ssl_options{'SSL_ca_file'}
+			: $ssl_options{'SSL_ca_path'} ) .  "\"");
 	ssend $sock, "STARTTLS";
 	sget $sock;
 	die "STARTTLS request rejected: $_\n" unless /^OK\b/;
@@ -517,7 +532,7 @@ if (exists $capa{STARTTLS}) {
 		my $t = Net::SSLeay::get_cipher_bits($sock->_get_ssl_object(), 0);
 		$tls_bitlength = $t if defined $t and $t;
 	}
-	debug("--- TLS activated here [$tls_bitlength bits]");
+	debug("-T- TLS activated here [$tls_bitlength bits]");
 	if ($dump_tls_information) {
 		print $sock->dump_peer_certificate();
 		if ($DEBUGGING and
@@ -1644,7 +1659,8 @@ sub tilde_expand
 
 sub fixup_ssl_configuration {
 	return unless $SEARCH_FOR_CERTS_DIR_IF_NEEDED;
-	return if -d $ssl_options{'SSL_ca_path'};
+	return if exists $ssl_options{'SSL_ca_file'} and -f $ssl_options{'SSL_ca_file'};
+	return if exists $ssl_options{'SSL_ca_path'} and -d $ssl_options{'SSL_ca_path'};
 	debug "Need to find SSL_ca_path, trying to ask openssl";
 	my $found = 0;
 	local *_;
@@ -1672,20 +1688,21 @@ sieve-connect - managesieve command-line client
 
  sieve-connect [-s <hostname>] [-p <portspec>] [-u <user>] [a <authzid>]
                [-m <authmech>] [-r realm] [-e execscript]
-	       [... longopts ...]
+               [... longopts ...]
  sieve-connect [--localsieve <script>] [--remotesieve <script>]
-	       [--debug] [--dumptlsinfo]
+               [--debug] [--dumptlsinfo]
                [--server <hostname>] [--port <portspec>] [--4|--6]
-	       [--user <authentication_id>] [--authzid <authzid>]
-	       [--realm <realm>] [--passwordfd <n>]
-	       [--clientkey <file> --clientcert <file>]|[--clientkeycert <file>]
-	       [--notlsverify|--nosslverify]
-	       [--noclearauth] [--noclearchan]
-	       [--authmech <mechanism>]
-	       [--ignoreserverversion]
-	       [--upload|--download|--list|--delete|--check
-	        --activate|--deactivate]|[--exec <script>]
-	       [--help|--man]
+               [--user <authentication_id>] [--authzid <authzid>]
+               [--realm <realm>] [--passwordfd <n>]
+               [--clientkey <file> --clientcert <file>]|[--clientkeycert <file>]
+               [--notlsverify|--nosslverify]
+               [--tlscapath <ca_directory>]|[--tlscafile <ca_file>]
+               [--noclearauth] [--noclearchan]
+               [--authmech <mechanism>]
+               [--ignoreserverversion]
+               [--upload|--download|--list|--delete|--check
+                --activate|--deactivate]|[--exec <script>]
+               [--help|--man]
 
 =head1 DESCRIPTION
 
@@ -1755,9 +1772,17 @@ Everything until the newline before EOF is the password,
 so it can contain embedded newlines.  Do not provide passwords on a
 command-line or in a process environment.
 
-If you are willing to accept the risk of man-in-the-middle active attacks
-and you are unable to arrange for the relevant Certificate Authority
-certificate to be available, then you can lower your safety with the
+By default, SSL certificates are looked for in F</etc/ssl/certs>, which
+should be a directory with hash symlinks per OpenSSL defaults.  If that
+directory does not exist, then OpenSSL's C<version> command will be asked
+for a location.
+Precedence above these defaults is given to the B<--tlscafile> option if
+given, else the B<--tlscapath> option if that is given.
+The former is one file containing certificates, the latter is a directory.
+
+Alternatively, if you are willing to accept the risk of man-in-the-middle
+active attacks and you are unable to arrange for the relevant Certificate
+Authority certificate to be available, then you can lower your safety with the
 B<--notlsverify> option, also spelt B<--nosslverify>.
 
 For SSL client certificate authentication, either B<--clientkeycert> may
@@ -1809,10 +1834,10 @@ issue in the F<IO::Socket::INET6> Perl library and need to upgrade that.
 
 Most historical implementations used port 2000 for ManageSieve.  RFC5804
 allocates port 4190.  This tool uses a port-spec of "sieve(4190)" as the
-default port, which means that an /etc/services (or substitute) entry for
-"sieve" as a TCP service takes precedence, but if that is not present, to
+default port, which means that an F</etc/services> (or substitute) entry for
+"sieve" as a TCP service takes precedence, but if that is not present, will
 assume 4190 as the default.  This change means that if you're still using
-port 2000 and do not have an /etc/services entry, updating to/beyond release
+port 2000 and do not have an F</etc/services> entry, updating to/beyond release
 0.75 of this tool will break invocations which do not specify a port.  The
 specification of the default port was moved to the user-configurable section
 at the top of the script and administrators may wish to override the shipped
