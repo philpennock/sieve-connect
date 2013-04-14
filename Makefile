@@ -67,11 +67,11 @@ man $(MANPAGE): $(SCRIPTSRC) datefile versionfile
 	pod2man -n "$(SCRIPTNAME)" -c '' -d "`cat datefile`" -r "`cat versionfile`" "$(SCRIPTSRC)" >"$(MANPAGE)"
 
 # filter is against spammers (see README)
-ChangeLog: .svn/text-base/*
+ChangeLog: .svn/wc.db
 	TZ='' svn log | sed '/^r[0-9]/s/|[^|]*|/| XXX |/' > ChangeLog
 
 # NB: Id tag is already in zulu time, so no problem with program itself
-datefile versionfile: .svn/text-base/*
+datefile versionfile: .svn/wc.db
 	@grep -q "Copyright.*\\<`date +%Y`" $(SCRIPTSRC) || { echo "Current year not in $(SCRIPTSRC) Copyright line"; false; }
 	@grep -q "Copyright.*\\<`date +%Y`" LICENSE || { echo "Current year not in LICENSE Copyright line"; false; }
 	TZ='' svn up
