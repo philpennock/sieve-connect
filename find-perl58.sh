@@ -27,5 +27,5 @@ if [ ".$p58" != "." ]; then
 	echo "$p58"
 	exit 0
 fi
-echo >&2 "$0: Failed to find a Perl 5.8 interpreter"
+echo >&2 "$0: Failed to find a Perl >= 5.8 interpreter"
 exit 1

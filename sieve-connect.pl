@@ -2,9 +2,9 @@
 #
 # $HeadURL$
 #
-# timsieved client script
+# MANAGESIEVE (timsieved) client script
 #
-# Copyright © 2006-2012 Phil Pennock.  All rights reserved.
+# Copyright © 2006-2013 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -46,11 +46,21 @@ my $DEFAULT_PORT = 'sieve(4190)';
 my %ssl_options = (
 	SSL_version	=> 'SSLv23:!SSLv2:!SSLv3',
 	SSL_cipher_list	=> 'ALL:!aNULL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
-	SSL_verify_mode	=> 0x01,
+	SSL_verify_mode	=> 0x03,
 	SSL_ca_path	=> '/etc/ssl/certs',
 );
 # These defaults can be overriden on the cmdline:
 my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
+
+# Add a key to this to blacklist that authentication mechanism.  Might be
+# useful on some platforms with broken libraries.  Make sure the key is
+# upper-case!
+my %blacklist_auth_mechanisms = ();
+# my %blacklist_auth_mechanisms = ( GSSAPI => 1, SPNEGO => 1 );
+
+# This says "go ahead and use SRV records and local hostname to figure out
+# a server to connect to".
+my $DERIVE_SIEVE_SERVER = 1;
 
 my @cmd_localfs_ls = qw( ls -C );
 
@@ -84,13 +94,23 @@ use File::Spec;
 use Getopt::Long;
 use IO::File;
 use IO::Socket::INET6;
-use IO::Socket::SSL 0.97; # SSL_ca_path bogus before 0.97
+use IO::Socket::SSL 1.14; # first version with automatic verification
 use MIME::Base64;
 use Net::DNS;
 use Pod::Usage;
 use POSIX qw/ strftime /;
+use Sys::Hostname qw();
 use Term::ReadKey;
 # interactive mode will attempt to pull in Term::ReadLine too.
+
+# This is only used to derive a default IMAP server using SRV records and
+# isn't always needed even then, so is strictly optional.
+our $have_mozilla_public_suffix;
+BEGIN { eval {
+	require 'Mozilla/PublicSuffix.pm';
+	Mozilla::PublicSuffix->import('public_suffix');
+	$have_mozilla_public_suffix = 1;
+} };
 
 my $DEBUGGING = 0;
 
@@ -110,6 +130,7 @@ sub do_version_display {
 				'Authen::SASL::Perl',
 				'IO::Socket::INET6',
 				'IO::Socket::SSL',
+				'Mozilla::PublicSuffix',
 				'Net::DNS',
 				'Term::ReadKey',
 				@do_require) {
@@ -136,6 +157,7 @@ sub closedie;
 sub closedie_NOmsg;
 sub die_NOmsg;
 sub fixup_ssl_configuration;
+sub derive_sieve_server;
 
 my $DEBUGGING_SASL = 0;
 my $DATASTART = tell DATA;
@@ -223,8 +245,16 @@ unless (defined $server) {
 		$server = $ENV{'IMAP_SERVER'};
 		# deal with a port number.
 		unless ($server =~ /:.*:/) { # IPv6 address literal
+			# We ignore this port because it's for the IMAP server,
+			# but we're after the Sieve server.
 			$server =~ s/:\d+\z//;
 		}
+	} elsif ($DERIVE_SIEVE_SERVER and not $no_srv) {
+		my ($tmpdomain, $tmpport, $tmpnosrv) = derive_sieve_server();
+		$server = $tmpdomain if defined $tmpdomain;
+		$port = $tmpport if defined $tmpport;
+		$no_srv = $tmpnosrv if defined $tmpnosrv;
+
 	}
 }
 
@@ -289,9 +319,15 @@ if ($action eq 'deactivate' and defined $remotesievename) {
 # ######################################################################
 # Start work; connect, start TLS, authenticate
 
+# host/port lookups are from DNS, we assume insecure. DANE might change that
+# for us in future. So, TLS negotiations do not use insecure hostnames from
+# DNS.
+my $trusted_server = $server;
+
 my @host_port_pairs;
 
 # Find the real hostname to connect to.
+# If the Sieve server was derived, then the DNS cache should be nice and warm
 unless ($no_srv) {
 	my $res = Net::DNS::Resolver->new();
 	my $query = $res->query("_sieve._tcp.$server", 'SRV');
@@ -515,12 +551,40 @@ parse_capabilities $sock;
 my $tls_bitlength = -1;
 
 if (exists $capa{STARTTLS}) {
+	# Always set SSL_hostname for SNI, only set the verification
+	# modes if not disabled.
+	$ssl_options{'SSL_hostname'} = $trusted_server;
+	if ($ssl_options{'SSL_verify_mode'} != 0x00) {
+		$ssl_options{'SSL_verifycn_name'} = $trusted_server;
+		# we want full wildcard support in same style that most admins
+		# are already familiar with:
+		$ssl_options{'SSL_verifycn_scheme'} = 'http';
+	}
+
+	if ($DEBUGGING) {
+
 	debug("-T- will use TLS certs from " .
 		( exists $ssl_options{'SSL_ca_file'} ? "file" : "directory" ) .
 		" \"" .
 		( exists $ssl_options{'SSL_ca_file'}
 			? $ssl_options{'SSL_ca_file'}
 			: $ssl_options{'SSL_ca_path'} ) .  "\"");
+	my $dbg_tls_verification = ' unknown';
+	if (exists $ssl_options{'SSL_verify_mode'}) {
+		my $mode = $ssl_options{'SSL_verify_mode'};
+		if ($mode == 0x00) {
+			$dbg_tls_verification = ' !DISABLED!';
+		} else {
+			$dbg_tls_verification = '';
+			$dbg_tls_verification .= ' verify-peer' if $mode & 0x01;
+			$dbg_tls_verification .= ' cert-required' if $mode & 0x02;
+			$dbg_tls_verification .= ' verify-once' if $mode & 0x04;
+		}
+	}
+	debug("-T- using hostname '${trusted_server}', verification$dbg_tls_verification");
+
+	} # DEBUGGING
+
 	ssend $sock, "STARTTLS";
 	sget $sock;
 	die "STARTTLS request rejected: $_\n" unless /^OK\b/;
@@ -644,7 +708,14 @@ if (defined $authmech) {
 	}
 	$authen_sasl_params{mechanism} = $authmech;
 } else {
-	$authen_sasl_params{mechanism} = $raw_capabilities{SASL};
+	if (scalar keys %blacklist_auth_mechanisms) {
+		$authen_sasl_params{mechanism} = join " ", grep
+			{not exists $blacklist_auth_mechanisms{uc $_}}
+			map {uc $_} @{$capa{SASL}};
+		debug("-A- Filtered mechanism list: $authen_sasl_params{mechanism}");
+	} else {
+		$authen_sasl_params{mechanism} = $raw_capabilities{SASL};
+	}
 }
 
 my $sasl = Authen::SASL->new(%authen_sasl_params);
@@ -1657,7 +1728,8 @@ sub tilde_expand
 	return ($more and wantarray) ? ($path, $tilded, $home) : $path;
 }
 
-sub fixup_ssl_configuration {
+sub fixup_ssl_configuration
+{
 	return unless $SEARCH_FOR_CERTS_DIR_IF_NEEDED;
 	return if exists $ssl_options{'SSL_ca_file'} and -f $ssl_options{'SSL_ca_file'};
 	return if exists $ssl_options{'SSL_ca_path'} and -d $ssl_options{'SSL_ca_path'};
@@ -1675,6 +1747,109 @@ sub fixup_ssl_configuration {
 	debug($found
 		? "Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}"
 		: "Unable to get system SSL_ca_path");
+}
+
+# returns 1 "okay", 0 "definitely not available", undef "unknown"
+sub domain_sieve_server
+{
+	my $domain = shift;
+	my $res = Net::DNS::Resolver->new();
+	foreach my $protocol ('sieve', 'imaps', 'imap') {
+		my $srv_name = "_${protocol}._tcp.${domain}";
+		my $query = $res->query($srv_name, 'SRV');
+		next unless $query;
+		my $okay = undef;
+		# if we have N>1 records and 1 says "no service present", it
+		# wins always, as the alternative is non-deterministic. Given
+		# buggy DNS entries, it's better to fail reproducibly always
+		# instead of only failing intermittently.
+		foreach my $rr ($query->answer) {
+			next unless $rr->type eq 'SRV';
+			if ($rr->target eq '.') {
+				$okay = 0;
+				last;
+			}
+			$okay = 1;
+		}
+		if (defined $okay) {
+			debug "findserver: found SRV record '${srv_name}' is @{[$okay ? '' : 'NOT ']} available";
+			return $okay;
+		}
+	}
+	return undef;
+}
+
+# returns three fields:
+#   * host/domain
+#   * port
+#   * no_srv new state
+# any may be undef to mean "no change".
+#
+# If we find SRV records, which state Sieve/IMAP present, we return the domain
+# and explicitly state no_srv off so that later we can correctly iterate
+# through.  If they say "explicitly not present", we fail to match.
+#
+# If the Mozilla::PublicSuffix module is present, we can walk up the hostname
+# until public, otherwise we only check one level up.
+#
+# Limitation: assumes domain-names well-formed for use as hostnames, doesn't
+# handled embedded dots within a label.
+sub derive_sieve_server
+{
+	return (undef, undef, undef) unless $DERIVE_SIEVE_SERVER;
+	my $host = Sys::Hostname::hostname();
+
+	# Some people actually do use a hostname that is their domain, where
+	# the domain is a public suffix. We won't support that unless we can
+	# be _sure_ that we're not checking public domains, by having
+	# Mozilla::PublicSuffix installed.
+	#
+	# Note that example.co.uk as a hostname would still check co.uk --
+	# for bug-free operation with hosts that are the domain and the domain
+	# is public, use that module!
+	my $domain;
+	if ($host =~ /^[^.]+\.(.+?\..+)\z/) {
+		$domain = $1;
+	} else {
+		return (undef, undef, undef) unless $have_mozilla_public_suffix;
+	}
+
+	if ($have_mozilla_public_suffix) {
+		$domain = $host;
+		debug "findserver: walking up hostname domains with Mozilla PSL";
+		while ($domain ne public_suffix($domain)) {
+			debug "findserver: checking SRV records for: $domain";
+			my $have_srv = domain_sieve_server $domain;
+			if (defined $have_srv) {
+				if ($have_srv) {
+					debug "findserver: SRV records, match";
+					return ($domain, undef, 0);
+				}
+				debug "findserver: SRV record explicitly says 'no service'";
+				return (undef, undef, 1); # force off SRV lookups
+			}
+			if ($domain =~ /^[^.]+\.(.+)\z/) {
+				$domain = $1;
+			} else {
+				last;
+			}
+		}
+	} else {
+		debug "findserver: checking SRV records for: $domain";
+		my $have_srv = domain_sieve_server $domain;
+		if (defined $have_srv) {
+			if ($have_srv) {
+				debug "findserver: SRV records, match";
+				return ($domain, undef, 0);
+			}
+			debug "findserver: SRV record explicitly says 'no service'";
+			return (undef, undef, 1); # force off SRV lookups
+		}
+	}
+
+	# We give up, say nothing
+	debug "findserver: no clues found";
+	return (undef, undef, undef);
 }
 
 # ######################################################################
@@ -1748,11 +1923,30 @@ provided as debug trace.
 The B<--version> option shows version information.
 When combined with B<--debug> it will show implementation dependency versions.
 
-The server can be a host or IP address, IPv4 or IPv6;
-the default is C<$IMAP_SERVER> from the environment (if it's not a
-unix-domain socket path) with any port specificaion stripped off,
-else F<localhost>.
+The server can be a host or IP address, IPv4 or IPv6.
+
+If a server is provided by B<--server> then that takes precedence.
+If that option is not present, then C<$IMAP_SERVER> from the environment is
+checked and, if it's not a unix-domain socket path, is used with any port
+specificaion stripped off.
+
+Next, unless B<--nosrv> is given then checks are made for SRV records to search
+for a default server; if the F<Mozilla::PublicSuffix> Perl module is available,
+these checks are done for every level of the hostname upto (but not including)
+the public suffix.
+If that module is not available, a crude heuristic is used: as long as there
+are three dots in the hostname, SRV records for the part of the hostname after
+the first dot are tried.
+If this is inappropriate, install F<Mozilla::PublicSuffix>.
+
+If no SRV records are found which point to a 'sieve', 'imaps' or 'imap'
+protocol service, of if a record is found which says "no such service in
+this domain" (by having a target of "."), then the final default server
+is F<localhost>.
+
 The port can be any Perl port specification, default is F<sieve(4190)>.
+A port from an SRV record will take precedence.
+
 The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
 By default, the server is taken to be a domain, for which SRV records are
@@ -1849,6 +2043,12 @@ weighted prioritised SRV records and I have not made any effort to fix this;
 whatever the default sort algorithm provides for SRV is what is used for
 ordering.
 
+If you don't specify a server and don't export C<$IMAP_SERVER> in the
+environment then the search mechanism is safer and more thorough if the
+F<Mozilla::PublicSuffix> Perl module is installed. In particular, if your
+hostname is also your domain name and the parent domain is administered
+by someone you don't trust, then you'll regret not installing that module.
+
 Probably need to sit down and work through the final RFC and see if any
 functionality is still missing.
 
@@ -1865,6 +2065,10 @@ mailing-list, 2006-11-14.  It was a single-action-and-quit script for
 scripting purposes.  The command-loop code was written (two days) later
 and deliberately designed to be compatible with sieveshell.
 
+Versions prior to 0.85 did not actually verify the peer certificate identity,
+although this author stupidly believed that it did.
+API/expectations mismatch.
+
 =head1 AUTHOR
 
 Phil Pennock E<lt>phil-perl@spodhuis.orgE<gt> is guilty, m'Lud.
@@ -1877,7 +2081,7 @@ L<mailto:sieve-connect-announce-request@spodhuis.org?subject=subscribe>
 =head1 PREREQUISITES
 
 Perl.  F<Authen::SASL>.  F<IO::Socket::INET6>.
-F<IO::Socket::SSL> (at least version 0.97).  F<Pod::Usage>.
+F<IO::Socket::SSL> (at least version 1.14).  F<Pod::Usage>.
 F<Net::DNS> for SRV lookup.
 F<Pod::Simple::Text> for built-in man command (optional).
 F<Term::ReadKey> to get passwords without echo.

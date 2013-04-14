@@ -3,6 +3,7 @@ Things that sieve-connect would like for xmas.
  * A full test-suite to torture the client.
  * Support for referrals
    * A server which does this so it can be tested
+ * DANE support for chasing TLS expected hostnames out of verified DNS
  * Figuring out sensible things to do with response codes in general
  * Figuring out what's going on with the isode implementation and the Perl
    SASL libraries that breaks authentication.
