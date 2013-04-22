@@ -69,14 +69,7 @@ my $SEARCH_FOR_CERTS_DIR_IF_NEEDED = 1;
 # ######################################################################
 # No user-serviceable parts below
 
-our $VERSION = 0;
-my $svn_revision = '$Revision$';
-if ($svn_revision =~ /^.Revision:\s*(\d+)\s*\$\z/) {
-	$svn_revision = $1;
-	$VERSION = '0.' . $1;
-} else {
-	$svn_revision = '0 because unknown';
-}
+our $VERSION = 0; # MAGIC LINE REPLACED IN DISTRIBUTION
 
 use Authen::SASL 2.11 qw(Perl);
 # 2.11: first version with non-broken DIGEST-MD5

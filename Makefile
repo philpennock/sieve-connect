@@ -17,15 +17,12 @@ RM=rm
 # These you probably don't want to adjust
 SCRIPTNAME=sieve-connect
 MANPAGE=sieve-connect.1
-SCRIPTSRC=sieve-connect.pl
+SCRIPTSRC=sieve-connect.pre.pl
+SCRIPTDIST=sieve-connect.pl
 TARPREFIX=sieve-connect
-DISTFILES=$(SCRIPTSRC) $(MANPAGE) ChangeLog Makefile README LICENSE TODO find-perl58.sh
+DISTFILES=$(SCRIPTDIST) $(MANPAGE) ChangeLog Makefile README LICENSE TODO find-perl58.sh
 GPG=gpg
 PGPSIGNKEY=0x3903637F
-
-TARVERSIONMAJ=0
-# Set this to .N if not dealing with first release based on a given svn version
-TARVERSIONPATCH=
 
 # ======================================================================
 # Targets for builders/installers
@@ -43,8 +40,8 @@ install-bin: $(SCRIPTNAME)
 install-man:
 	$(INSTALLPROG) -m $(MANPERM) $(INSTALLARGS) $(MANPAGE) $(INSTALLROOT)$(PREFIX)/$(MANDIR)/$(MANSECTDIR)
 
-bin $(SCRIPTNAME): $(SCRIPTSRC)
-	$(SED) <"$(SCRIPTSRC)" >"$(SCRIPTNAME)" "1s:/.*:$(PERL5BIN):"
+bin $(SCRIPTNAME): $(SCRIPTDIST)
+	$(SED) <"$(SCRIPTDIST)" >"$(SCRIPTNAME)" "1s:/.*:$(PERL5BIN):"
 	$(CHMOD) +x "$(SCRIPTNAME)"
 
 clean:
@@ -55,6 +52,14 @@ clean:
 
 dist: tarball pgpsig
 
+$(SCRIPTDIST): $(SCRIPTSRC) versionfile
+	perl -MFile::Slurp -p < $(SCRIPTSRC) > $(SCRIPTDIST) -e ' \
+		BEGIN { $$newver = read_file("versionfile"); chomp $$newver; }; \
+		next unless /VERSION.*MAGIC LINE REPLACED IN DISTRIBUTION/; \
+		$$_ = qq{our \$$VERSION = '"'"'$$newver'"'"';\n}; \
+	'
+	chmod +x $(SCRIPTDIST)
+
 # This can use non-portable commands, so shove into subdir
 tarball: $(DISTFILES) versionfile
 	pax -w -s ",^,$(TARPREFIX)-`cat versionfile`/," $(DISTFILES) > $(TARPREFIX)-`cat versionfile`.tar
@@ -63,20 +68,18 @@ tarball: $(DISTFILES) versionfile
 pgpsig: tarball versionfile
 	$(GPG) -a --detach-sign --default-key $(PGPSIGNKEY) $(TARPREFIX)-`cat versionfile`.tar.bz2
 
-man $(MANPAGE): $(SCRIPTSRC) datefile versionfile
-	pod2man -n "$(SCRIPTNAME)" -c '' -d "`cat datefile`" -r "`cat versionfile`" "$(SCRIPTSRC)" >"$(MANPAGE)"
+man $(MANPAGE): $(SCRIPTDIST) datefile versionfile
+	pod2man -n "$(SCRIPTNAME)" -c '' -d "`cat datefile`" -r "`cat versionfile`" "$(SCRIPTDIST)" >"$(MANPAGE)"
 
 # filter is against spammers (see README)
-ChangeLog: .svn/wc.db
-	TZ='' svn log | sed '/^r[0-9]/s/|[^|]*|/| XXX |/' > ChangeLog
+ChangeLog: .git/HEAD
+	TZ='' git log | sed '/^Author:/s/ <.*//' > ChangeLog
 
-# NB: Id tag is already in zulu time, so no problem with program itself
-datefile versionfile: .svn/wc.db
+datefile versionfile: .git/HEAD
 	@grep -q "Copyright.*\\<`date +%Y`" $(SCRIPTSRC) || { echo "Current year not in $(SCRIPTSRC) Copyright line"; false; }
 	@grep -q "Copyright.*\\<`date +%Y`" LICENSE || { echo "Current year not in LICENSE Copyright line"; false; }
-	TZ='' svn up
-	TZ='' svn info | sed -n "s/^Revision: \(.*\)/$(TARVERSIONMAJ).\1$(TARVERSIONPATCH)/p" > versionfile
-	TZ='' svn info | sed -n 's/^Last Changed Date: \([^ ]*\) .*/\1/p' >datefile
+	TZ='' git describe --match 'v[0-9]*' --dirty=-XX | sed -n 's/^v//p' > versionfile
+	TZ='' git show -s --format=%ci HEAD | cut -d ' ' -f 1 > datefile
 
 distclean: clean
-	$(RM) -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile
+	$(RM) -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile ./$(SCRIPTDIST)

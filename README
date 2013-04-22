@@ -113,6 +113,22 @@ verify the key then attend a PGP keysigning party.  It's where all the,
 uhm, uncool people are.  No, wait wait!  The _cool_ people.  That's it.
 Yeah.  *cough*
 
+Up to (and including) v0.85, the release version was just the number of the
+svn commit, so there would be gaps in release numbers.  After that release,
+the source moved to Git for revision control, and release numbers are
+sequential, with gaps for major occurances (such as a v1.0, one day).
+
+
+Revision Control
+================
+
+sieve-connect uses Git for revision control.  The public-facing canonical repo
+is currently GitHub, with the authoritative repository being:
+
+ https://github.com/syscomet/sieve-connect
+
+Pull-requests, etc, are accepted there.
+
 
 RFCs
 ====
