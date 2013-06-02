@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 #
-# $HeadURL$
-#
 # MANAGESIEVE (timsieved) client script
 #
 # Copyright © 2006-2013 Phil Pennock.  All rights reserved.
@@ -91,6 +89,7 @@ use Cwd qw();
 use Errno;
 use File::Basename qw();
 use File::Spec;
+use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use IO::File;
 use IO::Socket::INET6;
@@ -101,6 +100,7 @@ use Pod::Usage;
 use POSIX qw/ strftime /;
 use Sys::Hostname qw();
 use Term::ReadKey;
+
 # interactive mode will attempt to pull in Term::ReadLine too.
 
 # This is only used to derive a default IMAP server using SRV records and
@@ -113,6 +113,7 @@ BEGIN { eval {
 } };
 
 my $DEBUGGING = 0;
+my $LOST_CONNECTION = 0;
 
 sub do_version_display {
 	print "${0}: Version $VERSION\n";
@@ -176,6 +177,7 @@ my $net_domain = AF_UNSPEC;
 my $action = 'command-loop';
 my $execscript;
 GetOptions(
+	# settings which adjust how we connect
 	"localsieve=s"	=> \$localsievename,
 	"remotesieve=s"	=> \$remotesievename,
 	"server|s=s"	=> \$server,
@@ -201,6 +203,7 @@ GetOptions(
 	"dumptlsinfo|dumpsslinfo"	=> \$dump_tls_information,
 	"ignoreserverversion"	=> \$ignore_server_version,
 	# option names can be short-circuited, $action is complete:
+	# start with simple mappings to the protocol level
 	"upload"	=> sub { $action = 'upload' },
 	"download"	=> sub { $action = 'download' },
 	"list"		=> sub { $action = 'list' },
@@ -208,7 +211,10 @@ GetOptions(
 	"activate"	=> sub { $action = 'activate' },
 	"deactivate"	=> sub { $action = 'deactivate' },
 	"checkscript"   => sub { $action = 'checkscript' },
+	# then derived commands and alternate, more complex, actions
+	"edit"		=> sub { $action = 'edit' },
 	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
+	# then administrivia
 	'help|?'	=> sub { pod2usage(0) },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
 	'version'	=> \$opt_version_req, # --version --debug should work
@@ -679,7 +685,7 @@ if (defined $realm) {
 }
 my $prompt_for_password = sub {
 	ReadMode('noecho');
-	{ print STDERR "Sieve/IMAP Password: "; $| = 1; }
+	{ print STDERR "Sieve/IMAP Password: "; local $| = 1; }
 	my $password = ReadLine(0);
 	ReadMode('normal');
 	print STDERR "\n";
@@ -834,6 +840,7 @@ sub sieve_delete;
 sub sieve_download;
 sub sieve_upload;
 sub sieve_checkscript;
+sub sieve_edit;
 sub localfs_ls;
 sub localfs_chpwd;
 sub localfs_pwd;
@@ -844,6 +851,8 @@ sub aux_list_keywords;
 sub complete_rl_sieve;
 sub system_result;
 sub tilde_expand ; # don't apply to cmdline params as shell does it for us
+sub determine_text_editor;
+sub prompt_retry_quit;
 
 # Do *NOT* include any sort of shell-out.
 # Basic local navigation and diagnostics yes; Yet Another ShellOut Cmd no.
@@ -942,6 +951,15 @@ my %sieve_commands = (
 		params_max => 2,
 		remote_name => 1,
 		local_name => 2,
+	},
+	edit => {
+		routine => \&sieve_edit,
+		help => '<script> -- retrieve, edit, check, put script',
+		action => 1,
+		params => 1,
+		params_max => 1,
+		remote_name => 1,
+		min_version => undef, # we use checkscript, which also requires a version-compliant server
 	},
 	get	=> { alias => 'download' },
 	view	=> {
@@ -1071,6 +1089,11 @@ if ($action ne 'command-loop') {
 # How to get commands, how to finish up.
 my ($cmdlineget_func, $cmdlinedone_func);
 my $report_lineno = 0;
+
+$SIG{'PIPE'} = sub {
+	$LOST_CONNECTION = 1;
+	die "QUIT:Lost connection unexpectedly.\n";
+};
 
 if (defined $execscript) {
 	$report_lineno = 1;
@@ -1227,6 +1250,7 @@ while (defined (my $cmdline = $cmdlineget_func->())) {
 		}
 		last;
 	} elsif ($@) {
+		die $@ if $LOST_CONNECTION;
 		warn $@;
 	}
 }
@@ -1256,12 +1280,13 @@ sub sieve_list
 		print "$_\n";
 		sget $sock;
 	}
+	return 1;
 }
 
 sub sieve_deactivate
 {
 	my $sock = shift;
-	sieve_activate($sock, "");
+	return sieve_activate($sock, "");
 }
 
 sub sieve_activate
@@ -1272,7 +1297,9 @@ sub sieve_activate
 	sget $sock;
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "SETACTIVE($scriptname) failed: $_\n";
+		return 0;
 	}
+	return 1;
 }
 
 sub sieve_delete
@@ -1283,7 +1310,9 @@ sub sieve_delete
 	sget $sock;
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "DELETESCRIPT($delname) failed: $_\n";
+		return 0;
 	}
+	return 1;
 }
 
 sub sieve_download
@@ -1331,6 +1360,7 @@ sub sieve_download
 	if (defined $fh) {
 		$fh->close() or die "write-close($localfn) failed: $!\n";
 	}
+	return 1;
 }
 
 sub sieve_upload
@@ -1365,7 +1395,9 @@ sub sieve_upload
 
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "PUTSCRIPT($remotefn) failed: $_\n";
+		return 0;
 	}
+	return 1;
 }
 
 sub sieve_checkscript
@@ -1392,7 +1424,45 @@ sub sieve_checkscript
 
 	unless (/^OK((?:\s.*)?)$/) {
 		warn "CHECKSCRIPT failed: $_\n";
+		return 0;
 	}
+	return 1;
+}
+
+sub sieve_edit
+{
+	my ($sock, $remotefn) = @_; splice @_, 0, 2;
+	my ($rc, $key);
+
+	my ($fh,$localfn) = tempfile();
+
+	sieve_download($sock, $remotefn, $localfn)
+		or die "failed to download script";
+
+	my @editor_cmd = determine_text_editor();
+	debug("Text editor is @editor_cmd");
+
+	while (1) {
+		system(@editor_cmd, $localfn);
+		if ($?) {
+			warn "Editor failed: $?\n";
+			$key = prompt_retry_quit();
+			return if $key eq 'q';
+			next;
+		}
+
+		sieve_checkscript($sock, $localfn) or do {
+			$key = prompt_retry_quit();
+			return if $key eq 'q';
+			next;
+		};
+		last;
+	}
+
+	print "Uploading $remotefn\n";
+	sieve_upload($sock, $localfn, $remotefn)
+		or die "failed to upload script";
+	return 1;
 }
 
 sub localfs_ls
@@ -1626,6 +1696,7 @@ sub sget
 	$l = $sock->getline() unless defined $l;
 	unless (defined $l) {
 		debug "... no line read, connection dropped?";
+		$LOST_CONNECTION = 1;
 		die "Connection dropped unexpectedly when trying to read.\n";
 	}
 	if ($l =~ /{(\d+)\+?}\s*\n?\z/) {
@@ -1638,6 +1709,13 @@ sub sget
 				my $extra = $sock->getline();
 				$len -= length($extra);
 				$l .= $extra;
+			}
+			# there's a CRLF _after_ the literal string
+			if ($len == 0) {
+				my $hope_crlf = $sock->getline();
+				if ($hope_crlf ne "\r\n") {
+					debug "... after literal, did not get final CRLF but \"${hope_crlf}\"";
+				}
 			}
 		}
 		$dochomp = 0;
@@ -1656,7 +1734,7 @@ sub sget
 sub sfinish
 {
 	my $sock = shift;
-	if (defined $_[0]) {
+	if (defined $_[0] and not $LOST_CONNECTION) {
 		ssend $sock, $_[0];
 		sget $sock;
 	}
@@ -1879,6 +1957,33 @@ sub derive_sieve_server
 	return (undef, undef, undef);
 }
 
+sub determine_text_editor {
+	foreach my $envvarname (qw(VISUAL EDITOR)) {
+		if (exists $ENV{$envvarname} and $ENV{$envvarname} ne "") {
+			return split(/\s+/, $ENV{$envvarname});
+		}
+	}
+	foreach my $cmd (qw(sensible-editor vi)) {
+		foreach my $p (File::Spec->path()) {
+			my $candidate = File::Spec->catfile($p, $cmd);
+			return ($candidate) if -x $candidate;
+		}
+	}
+}
+
+sub prompt_retry_quit {
+	while (1) {
+		print STDERR "(R)edit or (Q)uit: ";
+		local $| = 1;
+		my $key = ReadKey(0);
+		print STDERR "\n";
+		next unless defined $key;
+		chomp $key;
+		$key = lc($key);
+		return $key if $key eq 'q' or $key eq 'r';
+	}
+}
+
 # ######################################################################
 __END__
 
@@ -1902,7 +2007,7 @@ sieve-connect - managesieve command-line client
                [--noclearauth] [--noclearchan]
                [--authmech <mechanism>]
                [--ignoreserverversion]
-               [--upload|--download|--list|--delete|--check
+               [--upload|--download|--list|--delete|--check|--edit|
                 --activate|--deactivate]|[--exec <script>]
                [--help|--man]
 
@@ -2027,6 +2132,9 @@ instead.
 It is believed that the names of the actions are
 sufficiently self-descriptive for any English-speaker who can safely be
 allowed unaccompanied computer usage.
+
+Note that B<--check> and B<--edit> require a server which advertises
+a "VERSION" capability, see B<--ignoreserverversion> to override.
 
 (If B<--server> is not explicitly stated, it may be provided at the end of
 the command-line for compatibility with sieveshell.)
