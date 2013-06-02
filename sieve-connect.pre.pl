@@ -47,7 +47,9 @@ my %ssl_options = (
 	SSL_version	=> 'SSLv23:!SSLv2:!SSLv3',
 	SSL_cipher_list	=> 'ALL:!aNULL:!NULL:!LOW:!EXP:!ADH:@STRENGTH',
 	SSL_verify_mode	=> 0x03,
-	SSL_ca_path	=> '/etc/ssl/certs',
+	# Most portable to let this be discovered automatically, but
+	# an installation might override it here:
+	#SSL_ca_path	=> '/etc/ssl/certs',
 );
 # These defaults can be overriden on the cmdline:
 my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
@@ -65,6 +67,11 @@ my $DERIVE_SIEVE_SERVER = 1;
 my @cmd_localfs_ls = qw( ls -C );
 
 my $SEARCH_FOR_CERTS_DIR_IF_NEEDED = 1;
+
+# You can override this to a particular path; is only used to find default
+# certificate stores; set to undef to skip asking OpenSSL and just check
+# some common locations.
+my $OPENSSL_COMMAND = 'openssl';
 
 # ######################################################################
 # No user-serviceable parts below
@@ -1726,20 +1733,47 @@ sub fixup_ssl_configuration
 	return unless $SEARCH_FOR_CERTS_DIR_IF_NEEDED;
 	return if exists $ssl_options{'SSL_ca_file'} and -f $ssl_options{'SSL_ca_file'};
 	return if exists $ssl_options{'SSL_ca_path'} and -d $ssl_options{'SSL_ca_path'};
-	debug "Need to find SSL_ca_path, trying to ask openssl";
-	my $found = 0;
 	local *_;
-	open(VERSION, '-|', 'openssl', 'version', '-d');
-	foreach (<VERSION>) {
-		next unless /^OPENSSLDIR: "(.+)"\s*$/;
-		$ssl_options{'SSL_ca_path'} = File::Spec->catdir($1, 'certs');
-		$found = 1;
-		last;
+	delete @ssl_options{'SSL_ca_path', 'SSL_ca_file'};
+
+	if (defined $OPENSSL_COMMAND) {
+		debug "setup: Need to find SSL_ca_path, trying to ask openssl";
+		my $found = 0;
+		# protect against openssl command not existing
+		open (my $olderr, ">&STDERR");
+		open(STDERR, File::Spec->devnull());
+		if (open(VERSION, '-|', $OPENSSL_COMMAND, 'version', '-d')) {
+			open(STDERR, ">&", $olderr); close($olderr);
+			foreach (<VERSION>) {
+				next unless /^OPENSSLDIR: "(.+)"\s*$/;
+				$ssl_options{'SSL_ca_path'} = File::Spec->catdir($1, 'certs');
+				$found = 1;
+				last;
+			}
+			close(VERSION);
+			debug("setup: " . ($found
+				? "Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}"
+				: "Unable to get system SSL_ca_path"));
+			return;
+		}
+		open(STDERR, ">&", $olderr); close($olderr);
 	}
-	close(VERSION);
-	debug($found
-		? "Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}"
-		: "Unable to get system SSL_ca_path");
+
+	debug "setup: No OpenSSL, check some common locations";
+	# ripped from $GOROOT/src/pkg/crypto/x509/root_unix.go :
+	my @golang_locations = (
+		"/etc/ssl/certs/ca-certificates.crt",     # Linux etc
+		"/etc/pki/tls/certs/ca-bundle.crt",       # Fedora/RHEL
+		"/etc/ssl/ca-bundle.pem",                 # OpenSUSE
+		"/etc/ssl/cert.pem",                      # OpenBSD
+		"/usr/local/share/certs/ca-root-nss.crt", # FreeBSD
+	);
+	foreach my $loc (@golang_locations) {
+		-f $loc or next;
+		$ssl_options{'SSL_ca_file'} = $loc;
+		debug("setup: Have set SSL_ca_file to $ssl_options{'SSL_ca_file'}");
+		return;
+	}
 }
 
 # returns 1 "okay", 0 "definitely not available", undef "unknown"
