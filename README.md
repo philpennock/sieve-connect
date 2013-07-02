@@ -47,7 +47,7 @@ Installing
 ----------
 
 You'll need Perl5 installed and various Perl modules from CPAN, as
-detailed below.  None of the modules are unusual.  A man-page is
+detailed below.  None of the mandatory modules are unusual.  A man-page is
 provided.
 
 SSL certificates are assumed to be in /etc/ssl/certs/ but this is
