@@ -20,7 +20,7 @@ MANPAGE=sieve-connect.1
 SCRIPTSRC=sieve-connect.pre.pl
 SCRIPTDIST=sieve-connect.pl
 TARPREFIX=sieve-connect
-DISTFILES=$(SCRIPTDIST) $(MANPAGE) ChangeLog Makefile README LICENSE TODO find-perl58.sh
+DISTFILES=$(SCRIPTDIST) $(MANPAGE) ChangeLog Makefile README.md LICENSE TODO find-perl58.sh
 GPG=gpg
 PGPSIGNKEY=0x3903637F
 
@@ -73,7 +73,7 @@ man $(MANPAGE): $(SCRIPTDIST) datefile versionfile
 
 # filter is against spammers (see README)
 ChangeLog: .git/HEAD
-	TZ='' git log | sed '/^Author:/s/ <.*//' > ChangeLog
+	TZ='' git log --decorate=short --date=iso -- sieve-connect.\* | sed '/^Author:/s/ <.*//' > ChangeLog
 
 datefile versionfile: .git/HEAD
 	@grep -q "Copyright.*\\<`date +%Y`" $(SCRIPTSRC) || { echo "Current year not in $(SCRIPTSRC) Copyright line"; false; }
