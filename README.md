@@ -38,7 +38,7 @@ New Versions
 There is an announcement-only mailing-list for new releases.  The list
 is <sieve-connect-announce@spodhuis.org> and you can subscribe via one of:
  * <http://mail.globnix.net/mailman/listinfo/sieve-connect-announce>
- * <mailto:sieve−connect-announce-request@spodhuis.org?subject=subscribe>
+ * <mailto:sieve-connect-announce-request@spodhuis.org?subject=subscribe>
 
 Official announcements should be PGP-signed (by a key in the strong set).
 
