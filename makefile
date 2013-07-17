@@ -32,13 +32,13 @@ all: $(SCRIPTNAME)
 install: all install-bin install-man
 
 install-bin: $(SCRIPTNAME)
-	$(INSTALLPROG) -m $(BINPERM) $(INSTALLARGS) $(SCRIPTNAME) $(INSTALLROOT)$(PREFIX)/$(BINDIR)
+	$(INSTALLPROG) -m $(BINPERM) $(INSTALLARGS) $(SCRIPTNAME) $(INSTALLROOT)$(PREFIX)/$(BINDIR)/./
 
 # making the man-page is dependent upon files not distributed, so they're
 # regenerated, so we don't list it as a dependency here -- instead we
 # assume that the maintainer created it for us (as a tarball depenency)
 install-man:
-	$(INSTALLPROG) -m $(MANPERM) $(INSTALLARGS) $(MANPAGE) $(INSTALLROOT)$(PREFIX)/$(MANDIR)/$(MANSECTDIR)
+	$(INSTALLPROG) -m $(MANPERM) $(INSTALLARGS) $(MANPAGE) $(INSTALLROOT)$(PREFIX)/$(MANDIR)/$(MANSECTDIR)/./
 
 bin $(SCRIPTNAME): $(SCRIPTDIST)
 	$(SED) <"$(SCRIPTDIST)" >"$(SCRIPTNAME)" "1s:/.*:$(PERL5BIN):"
@@ -51,6 +51,14 @@ clean:
 # Targets after here are for distributors
 
 dist: tarball pgpsig
+
+# The presence of SCRIPTSRV and git rules breaks install from outside the git
+# repository; we fix it by just ripping out the distributors section from the
+# tarball Makefile.  So "makefile" in git and for use when making a release.
+# "Makefile" for distribution.  BSD make prefers "makefile" to "Makefile", so
+# we can still use distributor targets when both are present.
+Makefile: makefile
+	sed '/Targets after here are for distributors/,$$d' < makefile > Makefile
 
 $(SCRIPTDIST): $(SCRIPTSRC) versionfile
 	perl -MFile::Slurp -p < $(SCRIPTSRC) > $(SCRIPTDIST) -e ' \
@@ -82,4 +90,4 @@ datefile versionfile: .git/HEAD
 	TZ='' git show -s --format=%ci HEAD | cut -d ' ' -f 1 > datefile
 
 distclean: clean
-	$(RM) -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile ./$(SCRIPTDIST)
+	$(RM) -f "./$(MANPAGE)" ./ChangeLog ./versionfile ./datefile ./$(SCRIPTDIST) ./Makefile
