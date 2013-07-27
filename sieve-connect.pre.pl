@@ -62,8 +62,11 @@ my %blacklist_auth_mechanisms = ();
 # a server to connect to".
 my $DERIVE_SIEVE_SERVER = 1;
 
+# Command used for generating local-side listings.
 my @cmd_localfs_ls = qw( ls -C );
 
+# Unset this to disable probing for SSL certs and just use whatever is
+# set above in %ssl_options.
 my $SEARCH_FOR_CERTS_DIR_IF_NEEDED = 1;
 
 # You can override this to a particular path; is only used to find default
@@ -1806,6 +1809,42 @@ sub tilde_expand
 	return ($more and wantarray) ? ($path, $tilded, $home) : $path;
 }
 
+# Given a directory, the fact of its existence doesn't mean it's usable for
+# OpenSSL certs; it could have been created by an installer but never used.  If
+# it's usable, then there will be hash symlinks therein.  Each is 8 hex chars,
+# a dot and then a sequence number starting at 0, to handle hash collisions.
+# So, if there are no (symlinks to) files matching *.0 then although the dir
+# exists, it's unitialised cruft.  If none of the symlinks are resolvable, it's
+# also cruft.
+#
+# Theoretically, a system might try to make the dir unreadable-but-executable
+# so that it becomes an oracle that can be asked if a given cert should be
+# trusted.  That approach of self-mistrust is not supported: if you have such a
+# system, report it and we can add an option to disable the contents probe.
+sub confirm_valid_sslcerts_dir
+{
+	my $dir = shift;
+	die "internal error" unless defined $dir;
+	return 0 unless -e $dir;
+	unless (-d $dir) {
+		debug("setup: not a directory: $dir");
+		return 0;
+	}
+	unless (opendir(DIR, $dir)) {
+		debug("setup: unable to opendir($dir): $!");
+		return 0;
+	}
+	my @some_entries = grep /^[^.].+\.0\z/, readdir(DIR);
+	# while opendir failing is likely permissions, closedir
+	# failing is the system failing badly.
+	closedir(DIR) or die "closedir($dir) failed: $!\n";
+	foreach my $entry (@some_entries) {
+		return 1 if -f File::Spec->catfile($dir, $entry);
+	}
+	debug("setup: found no files named for cert-hashes, rejecting dir [$dir]");
+	return 0;
+}
+
 sub fixup_ssl_configuration
 {
 	return unless $SEARCH_FOR_CERTS_DIR_IF_NEEDED;
@@ -1816,25 +1855,37 @@ sub fixup_ssl_configuration
 
 	if (defined $OPENSSL_COMMAND) {
 		debug "setup: Need to find SSL_ca_path, trying to ask openssl";
-		my $found = 0;
+		my $found = undef;
 		# protect against openssl command not existing
-		open (my $olderr, ">&STDERR");
+		open (my $olderr, ">&STDERR") or die "failed to dup(stderr): $!\n";
 		open(STDERR, File::Spec->devnull());
+		my $oops = 0;
 		if (open(VERSION, '-|', $OPENSSL_COMMAND, 'version', '-d')) {
-			open(STDERR, ">&", $olderr); close($olderr);
 			foreach (<VERSION>) {
 				next unless /^OPENSSLDIR: "(.+)"\s*$/;
-				$ssl_options{'SSL_ca_path'} = File::Spec->catdir($1, 'certs');
-				$found = 1;
+				$found = $1;
 				last;
 			}
 			close(VERSION);
-			debug("setup: " . ($found
-				? "Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}"
-				: "Unable to get system SSL_ca_path"));
-			return;
+		} else {
+			$oops = 1;
 		}
 		open(STDERR, ">&", $olderr); close($olderr);
+		if ($oops) {
+			debug("setup: unable to run openssl");
+		} elsif (defined $found) {
+			my $attempt = File::Spec->catdir($found, 'certs');
+			if (confirm_valid_sslcerts_dir($attempt)) {
+				$ssl_options{'SSL_ca_path'} = $attempt;
+				debug("setup: Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}");
+			} else {
+				debug("setup: found OPENSSLDIR but certs/ invalid");
+				$found = undef;
+			}
+		} else {
+			debug("setup: openssl did not tell us OPENSSLDIR");
+		}
+		return if defined $found;
 	}
 
 	debug "setup: No OpenSSL, check some common locations";
@@ -1850,6 +1901,18 @@ sub fixup_ssl_configuration
 		-f $loc or next;
 		$ssl_options{'SSL_ca_file'} = $loc;
 		debug("setup: Have set SSL_ca_file to $ssl_options{'SSL_ca_file'}");
+		return;
+	}
+	my @alt_dir_locations = (
+		"/etc/ssl/certs",			# widespread
+		"/etc/x509/certs",
+		"/system/etc/security/cacerts",		# some Android
+		"/data/misc/keychain/cacerts-added",	# some Android
+	);
+	foreach my $loc (@alt_dir_locations) {
+		confirm_valid_sslcerts_dir($loc) or next;
+		$ssl_options{'SSL_ca_path'} = $loc;
+		debug("setup: Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}");
 		return;
 	}
 }
