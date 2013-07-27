@@ -3,7 +3,6 @@ Things to happen before I cut a 1.0 release:
  * Write the test suite
    * Bring up pysieved on multiple ports with various certificates and some
      DNS set up to aid testing.
- * Switch to Git, use GitHub with a public issue-tracker
  * SASLprep
 
 Things that sieve-connect would like for xmas.
@@ -41,3 +40,4 @@ Things we got because Santa is generous:
  * NOOP, to help clients work around the ambiguity in whether servers do or
    don't send a capability response automatically, which broke the lockstep
    model of the protocol.
+ * Switch to Git, use GitHub with a public issue-tracker
