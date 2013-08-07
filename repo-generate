@@ -1,0 +1,67 @@
+#!/bin/sh
+
+export TZ=''
+
+release_pattern='v[0-9]*'
+
+git_last_version() {
+	git describe --match="$release_pattern"
+}
+
+files_changed_in_last_version() {
+	git diff-tree --no-commit-id --name-only -r $(git_last_version)
+}
+
+partial_changelog() {
+# the sed filter is against spammers
+	git log --decorate=short --date=iso "$@" | sed '/^Author:/s/ <.*//'
+}
+
+gen_changelog() {
+	if files_changed_in_last_version | fgrep -q sieve-connect.
+	then
+		partial_changelog -- sieve-connect.\*
+	else
+		latest="$(git_last_version)"
+		partial_changelog "${latest}^..${latest}"
+		echo
+		partial_changelog -- sieve-connect.\*
+	fi
+}
+
+missing_year() {
+	echo >&2 "Current year not in $* Copyright line"
+	exit 1
+}
+
+check_copyright() {
+	if [ $# -eq 0 ]; then
+		echo >&2 "Missing files to check for copyright year"
+		exit 1
+	fi
+	local fn
+	for fn
+	do
+		grep -q "Copyright.*\\<`date +%Y`" "$fn" || missing_year "$fn"
+	done
+}
+
+gen_version() {
+	git describe --match="$release_pattern" --dirty=-XX | sed -n 's/^v//p'
+}
+
+gen_date() {
+	git show -s --format=%ci HEAD | cut -d ' ' -f 1
+}
+
+cmd="$1"
+shift
+
+case "${cmd:-unknown}" in
+	copyright) check_copyright "$@" ;;
+	changelog) gen_changelog "$@" ;;
+	date) gen_date "$@" ;;
+	version) gen_version "$@" ;;
+	help) echo "$0 changelog|date|version|{copyright <files>}" ;;
+	*) echo >&2 "$0: unknown action" ; exit 1 ;;
+esac
