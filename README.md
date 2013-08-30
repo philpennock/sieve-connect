@@ -132,7 +132,7 @@ Revision Control
 sieve-connect uses Git for revision control.  The public-facing canonical repo
 is currently GitHub, with the authoritative repository being:
 
- <https://github.com/syscomet/sieve-connect>
+ <https://github.com/philpennock/sieve-connect>
 
 Pull-requests, etc, are accepted there.
 
