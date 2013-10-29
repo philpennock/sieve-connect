@@ -1853,6 +1853,29 @@ sub fixup_ssl_configuration
 	local *_;
 	delete @ssl_options{'SSL_ca_path', 'SSL_ca_file'};
 
+	# OpenSSL crypto/cryptlib.h defines env var names
+	# SSL_CERT_DIR & SSL_CERT_FILE; these are expected to take precedence
+	# over any defaults from the library.  If the library is asked to load
+	# defaults, it will honour these; unfortunately, IO::Socket::SSL
+	# attempts to provide defaults at its own layer and neither it nor
+	# Net::SSLeay has a facility to ask that OpenSSL defaults be loaded.
+	# Thus we have to emulate support to get back to something reasonable.
+	if (exists $ENV{'SSL_CERT_DIR'}) {
+		if (confirm_valid_sslcerts_dir($ENV{'SSL_CERT_DIR'})) {
+			$ssl_options{'SSL_ca_path'} = $ENV{'SSL_CERT_DIR'};
+			debug("setup: Have set SSL_ca_path to $ssl_options{'SSL_ca_path'} (from \$SSL_CERT_DIR)");
+			return;
+		}
+		debug("setup: \$SSL_CERT_DIR defined but invalid, ignoring")
+	}
+	if (exists $ENV{'SSL_CERT_FILE'}) {
+		if (-f $ENV{'SSL_CERT_FILE'}) {
+			$ssl_options{'SSL_ca_file'} = $ENV{'SSL_CERT_FILE'};
+			debug("setup: Have set SSL_ca_file to $ssl_options{'SSL_ca_file'} (from \$SSL_CERT_FILE)");
+			return;
+		}
+	}
+
 	if (defined $OPENSSL_COMMAND) {
 		debug "setup: Need to find SSL_ca_path, trying to ask openssl";
 		my $found = undef;
@@ -2161,10 +2184,18 @@ Everything until the newline before EOF is the password,
 so it can contain embedded newlines.  Do not provide passwords on a
 command-line or in a process environment.
 
-By default, SSL certificates are looked for in F</etc/ssl/certs>, which
-should be a directory with hash symlinks per OpenSSL defaults.  If that
-directory does not exist, then OpenSSL's C<version> command will be asked
-for a location.
+Unless modified at install/packaging time, by default SSL certificate authority
+certificates are searched for.
+The first attempt is to try, in turn, for environment variables
+C<$SSL_CERT_DIR> & C<$SSL_CERT_FILE> which are the names supported by the
+OpenSSL library and so often supported by client commands.
+Next, if the OpenSSL command C<version> is available and the output
+C<OPENSSLDIR> can be parsed and the C<certs> directory exists within that
+directory, then that location will be used.
+Finally, a fixed list of common locations are searched and the first one to
+exist is used.  Invoking with B<--debug> will show more details during the
+C<setup:> phase.
+
 Precedence above these defaults is given to the B<--tlscafile> option if
 given, else the B<--tlscapath> option if that is given.
 The former is one file containing certificates, the latter is a directory.
