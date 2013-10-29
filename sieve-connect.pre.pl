@@ -349,8 +349,7 @@ unless ($no_srv) {
 	}
 	if (@srv_recs) {
 		@srv_recs = Net::DNS::rrsort('SRV', '', @srv_recs);
-		my $old = "[$server]:" . (defined $port ? $port : $DEFAULT_PORT);
-		debug "dns: SRV results found for: $old";
+		debug "dns: SRV results found for: $server";
 		foreach my $rr (@srv_recs) {
 			push @host_port_pairs, [$rr->target, $rr->port];
 		}
@@ -363,6 +362,7 @@ unless (@host_port_pairs) {
 	push @host_port_pairs, [$server, $port];
 }
 my $sock = undef;
+my $first_hp_attempt = 1;
 
 # Yes, this used to just try one connection and the list of candidates was
 # bolted on; how could you tell?
@@ -370,7 +370,25 @@ my $sock = undef;
 foreach my $hp (@host_port_pairs) {
 	my $host_candidate = $hp->[0];
 	my $port_candidate = $hp->[1];
-	debug "connection: trying <[$host_candidate]:$port_candidate>";
+	my $debug_host = $host_candidate =~ /:/ ? "[$host_candidate]" : $host_candidate;
+	my $debug_extra = '';
+
+	# Although we do log the actual port number, if we succeed in
+	# connecting, we don't log the actual port number tried if we don't
+	# connect because we don't have a socket to ask.  The Perl IO::Socket
+	# convention for specifying a name and fallback is not intuitively
+	# obvious and causes debugging confusion.
+	if ($port_candidate =~ /^(.+)\((\d+)\)\z/) {
+		$debug_extra .= " (try '${1}' in /etc/services, fallback $2)";
+		if ($first_hp_attempt) {
+			my @serv = getservbyname($1, 'tcp');
+			if (@serv and $serv[2] != $2) {
+				debug("connection: WARNING: /etc/services defines $1 as ${serv[2]}, not $2");
+			}
+		}
+	}
+
+	debug "connection: trying <${debug_host}:${port_candidate}>$debug_extra";
 	my $s = IO::Socket::INET6->new(
 		PeerHost	=> $host_candidate,
 		PeerPort	=> $port_candidate,
@@ -383,18 +401,20 @@ foreach my $hp (@host_port_pairs) {
 		if ($!{EINVAL} and $net_domain != AF_UNSPEC) {
 		  $extra = " (Probably no host record for overriden IP version)\n";
 		}
-		warn qq{Connection to <[$host_candidate]:$port_candidate> failed: $!\n$extra};
+		warn qq{Connection to <${debug_host}:${port_candidate}> failed: $!\n$extra};
 		next;
 	}
 	unless ($s->peerhost()) {
 		# why am I seeing successful returns for unconnected sockets? *sigh*
-		warn qq{Connection to <[$host_candidate]:$port_candidate> failed.\n};
+		warn qq{Connection to <${debug_host}:${port_candidate}> failed.\n};
 		next;
 	}
 	$sock = $s;
 	$server = $host_candidate;
 	$port = $port_candidate;
 	last;
+} continue {
+	$first_hp_attempt = 0;
 }
 exit(1) unless defined $sock;
 
