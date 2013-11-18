@@ -99,12 +99,22 @@ use IO::Socket::INET6;
 use IO::Socket::SSL 1.14; # first version with automatic verification
 use MIME::Base64;
 use Net::DNS;
+use Net::SSLeay 1.37; # see version note below
 use Pod::Usage;
 use POSIX qw/ strftime /;
 use Sys::Hostname qw();
 use Term::ReadKey;
 
 # interactive mode will attempt to pull in Term::ReadLine too.
+
+# Net::SSLeay -- we used to just conditionally use this if loaded, indirectly
+# via the IO::Socket::SSL library.  We now want to explicitly require it for a
+# top-level feature, --tlsfingerprint.
+# The first version supplying X509_get_fingerprint() was 1.37 (2011-09-16) per
+# http://cpansearch.perl.org/src/MIKEM/Net-SSLeay-1.55/Changes
+#
+# Debian Squeeze is still on Net::SSLeay 1.36 but at this point I'm not going
+# to worry about backport compatibility to "oldstable".
 
 # This is only used to derive a default IMAP server using SRV records and
 # isn't always needed even then, so is strictly optional.
@@ -168,7 +178,7 @@ my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
 my $port = undef;
-my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $ssl_fingerprint, $passwordfd);
+my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $ssl_cert_fingerprint, $passwordfd);
 my ($tlscapath, $tlscafile);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
@@ -195,7 +205,7 @@ GetOptions(
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
 	"notlsverify|nosslverify" => sub { $ssl_options{'SSL_verify_mode'} = 0x00 },
-	"tlsfingerprint|sslfingerprint=s" => \$ssl_fingerprint,
+	"tlscertfingerprint|sslcertfingerprint=s" => \$ssl_cert_fingerprint,
 	"tlscapath=s"	=> \$tlscapath,
 	"tlscafile=s"	=> \$tlscafile,
 	"noclearauth"	=> \$forbid_clearauth,
@@ -638,14 +648,22 @@ if (exists $capa{STARTTLS}) {
 				$sock->peer_certificate());
 		}
 	}
-	if (defined $ssl_fingerprint) {
+	if (defined $ssl_cert_fingerprint) {
+		my ($fp_type, $fp_want) = split(/:/, $ssl_cert_fingerprint, 2);
+		# type validation: Net::SSLeay::X509_get_fingerprint supports
+		# some set of algorithms, we don't want to overconstrain; when
+		# fed garbage, that routine silently falls back to SHA1.  So,
+		# no error return, no die to catch, we just let the resulting
+		# mismatch be shown.
+		$fp_want = uc $fp_want;
 		my $server_fingerprint = Net::SSLeay::X509_get_fingerprint(
-			$sock->peer_certificate(), "sha1");
-		if ($server_fingerprint ne (uc $ssl_fingerprint)) {
-			print STDERR (
-				"Expected fingerprint $ssl_fingerprint,\n" .
-				"     got fingerprint $server_fingerprint\n");
-			die "Fingerprint verification failed\n";
+			$sock->peer_certificate(), $fp_type);
+		if (uc($server_fingerprint) eq $fp_want) {
+			debug("-T- TLS X.509 Fingerprint matched; [${fp_type}] $fp_want");
+		} else {
+			die "TLS X.509 Fingerprint verification failed (digest type $fp_type):\n" .
+				" expected fingerprint: $fp_want\n" .
+				"      got fingerprint: $server_fingerprint\n";
 		}
 	}
 	$forbid_clearauth = 0;
@@ -2120,7 +2138,7 @@ sieve-connect - managesieve command-line client
                [--realm <realm>] [--passwordfd <n>]
                [--clientkey <file> --clientcert <file>]|[--clientkeycert <file>]
                [--notlsverify|--nosslverify]
-               [--tlsfingerprint|--sslfingerprint]
+               [--tlscertfingerprint|--sslcertfingerprint <dgsttype:digest>]
                [--tlscapath <ca_directory>]|[--tlscafile <ca_file>]
                [--noclearauth] [--noclearchan]
                [--authmech <mechanism>]
@@ -2237,12 +2255,16 @@ active attacks and you are unable to arrange for the relevant Certificate
 Authority certificate to be available, then you can lower your safety with the
 B<--notlsverify> option, also spelt B<--nosslverify>.
 
-If you don't want to (only) rely on CA systems you can explicitly set the
-expected SHA-1 fingerprint of the server certificate using the
-B<--tlsfingerprint> option, also spelt B<--sslfingerprint>. The option expects
-the typical hexadecimal notation of the fingerprint, with colons as separators
-between octets. Note that you still need to disable CA verification (see
-above) if you want to verify the fingerprint only.
+If you don't want to (only) rely on CA systems you can explicitly set an
+expected server certificate fingerprint using the B<--tlscertfingerprint>
+option, also spelt B<--sslcertfingerprint>.  If you wish to ignore CA
+validation, you still need to disable that explicitly (see above), as the
+default is to add an extra constraint (pinning, within valid CA certificates).
+This option specifies the X.509 certificate fingerprint (not a public key
+fingerprint), as given by OpenSSL.  The field part of the value should be an
+algorithm name, such as C<sha256> or C<sha1>.  That is followed by a colon, and
+then the fingerprint data in its usual colon-delimited hexadecimal notation.
+Eg: C<--tlscertfingerprint sha256:24:B4:..28-more-fields..:A8:58>
 
 For SSL client certificate authentication, either B<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
