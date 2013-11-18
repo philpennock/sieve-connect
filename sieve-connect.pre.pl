@@ -168,7 +168,7 @@ my $DATASTART = tell DATA;
 my $localsievename;
 my $remotesievename;
 my $port = undef;
-my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $passwordfd);
+my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $ssl_fingerprint, $passwordfd);
 my ($tlscapath, $tlscafile);
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
@@ -195,6 +195,7 @@ GetOptions(
 	"clientcert=s"	=> \$sslcertfile,
 	"clientkeycert=s" => sub { $sslkeyfile = $sslcertfile = $_[1] },
 	"notlsverify|nosslverify" => sub { $ssl_options{'SSL_verify_mode'} = 0x00 },
+	"tlsfingerprint|sslfingerprint=s" => \$ssl_fingerprint,
 	"tlscapath=s"	=> \$tlscapath,
 	"tlscafile=s"	=> \$tlscafile,
 	"noclearauth"	=> \$forbid_clearauth,
@@ -635,6 +636,16 @@ if (exists $capa{STARTTLS}) {
 			# around behind IO::Socket::SSL's back.
 			print STDERR Net::SSLeay::PEM_get_string_X509(
 				$sock->peer_certificate());
+		}
+	}
+	if (defined $ssl_fingerprint) {
+		my $server_fingerprint = Net::SSLeay::X509_get_fingerprint(
+			$sock->peer_certificate(), "sha1");
+		if ($server_fingerprint ne (uc $ssl_fingerprint)) {
+			print STDERR (
+				"Expected fingerprint $ssl_fingerprint,\n" .
+				"     got fingerprint $server_fingerprint\n");
+			die "Fingerprint verification failed\n";
 		}
 	}
 	$forbid_clearauth = 0;
@@ -2109,6 +2120,7 @@ sieve-connect - managesieve command-line client
                [--realm <realm>] [--passwordfd <n>]
                [--clientkey <file> --clientcert <file>]|[--clientkeycert <file>]
                [--notlsverify|--nosslverify]
+               [--tlsfingerprint|--sslfingerprint]
                [--tlscapath <ca_directory>]|[--tlscafile <ca_file>]
                [--noclearauth] [--noclearchan]
                [--authmech <mechanism>]
@@ -2224,6 +2236,13 @@ Alternatively, if you are willing to accept the risk of man-in-the-middle
 active attacks and you are unable to arrange for the relevant Certificate
 Authority certificate to be available, then you can lower your safety with the
 B<--notlsverify> option, also spelt B<--nosslverify>.
+
+If you don't want to (only) rely on CA systems you can explicitly set the
+expected SHA-1 fingerprint of the server certificate using the
+B<--tlsfingerprint> option, also spelt B<--sslfingerprint>. The option expects
+the typical hexadecimal notation of the fingerprint, with colons as separators
+between octets. Note that you still need to disable CA verification (see
+above) if you want to verify the fingerprint only.
 
 For SSL client certificate authentication, either B<--clientkeycert> may
 be used to refer to a file with both the key and cert present or both
