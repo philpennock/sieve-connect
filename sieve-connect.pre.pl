@@ -2143,7 +2143,7 @@ sieve-connect - managesieve command-line client
                [--noclearauth] [--noclearchan]
                [--authmech <mechanism>]
                [--ignoreserverversion]
-               [--upload|--download|--list|--delete|--check|--edit|
+               [--upload|--download|--list|--delete|--checkscript|--edit|
                 --activate|--deactivate]|[--exec <script>]
                [--help|--man]
 
@@ -2176,6 +2176,8 @@ etc.
 
 =head1 OPTIONS
 
+Option names may be given as the shortest unique prefix.
+
 The remote sieve script name defaults to the same as the local sieve
 script name, so just specify the local one if only one is needed; it
 was a deliberate decision to have the defaults this way around, to make
@@ -2190,15 +2192,16 @@ provided as debug trace.
 
 The B<--version> option shows version information.
 When combined with B<--debug> it will show implementation dependency versions.
+The B<--help> and B<--man> options provide usage information.
 
 The server can be a host or IP address, IPv4 or IPv6.
 
 If a server is provided by B<--server> then that takes precedence.
 If that option is not present, then C<$IMAP_SERVER> from the environment is
 checked and, if it's not a unix-domain socket path, is used with any port
-specificaion stripped off.
+specification stripped off.
 
-Next, unless B<--nosrv> is given then checks are made for SRV records to search
+Next, unless B<--nosrv> is given, checks are made for SRV records so as to search
 for a default server; if the F<Mozilla::PublicSuffix> Perl module is available,
 these checks are done for every level of the hostname upto (but not including)
 the public suffix.
@@ -2213,7 +2216,10 @@ this domain" (by having a target of "."), then the final default server
 is F<localhost>.
 
 The port can be any Perl port specification, default is F<sieve(4190)>.
-A port from an SRV record will take precedence.
+A port from an SRV record will take precedence.  The Perl specification
+provides a name to look up in the system services database (F</etc/services>)
+followed in parentheses by a default value to use if the name is not found.
+Thus this default will honour a value of 2000 from F</etc/services>.
 
 The B<--4> or B<--6> options may be used to coerce IPv4 or IPv6.
 
@@ -2261,7 +2267,7 @@ option, also spelt B<--sslcertfingerprint>.  If you wish to ignore CA
 validation, you still need to disable that explicitly (see above), as the
 default is to add an extra constraint (pinning, within valid CA certificates).
 This option specifies the X.509 certificate fingerprint (not a public key
-fingerprint), as given by OpenSSL.  The field part of the value should be an
+fingerprint), as given by OpenSSL.  The first part of the value should be an
 algorithm name, such as C<sha256> or C<sha1>.  That is followed by a colon, and
 then the fingerprint data in its usual colon-delimited hexadecimal notation.
 Eg: C<--tlscertfingerprint sha256:24:B4:..28-more-fields..:A8:58>
@@ -2284,9 +2290,41 @@ present.  If no action is present, the interactive mode is entered.
 If the exec action is present, commands are read from the script
 instead.
 
-It is believed that the names of the actions are
-sufficiently self-descriptive for any English-speaker who can safely be
-allowed unaccompanied computer usage.
+=over 4
+
+=item B<--upload>
+will upload a script to the server.
+
+=item B<--download>
+will download a script from the server.
+
+=item B<--list>
+will list the scripts which exist on the server.
+One of those scripts might be marked ACTIVE.
+
+=item B<--delete>
+will delete a script from the server.
+
+=item B<--checkscript>
+will ask the server to validate the local file provided.
+
+=item B<--edit>
+will download a script, invoke an editor upon it, ask the server to
+check the results (and offer to re-edit if the server rejects it) and finally
+upload the result.
+
+=item B<--activate>
+will mark the specified remote script as the active one.
+
+=item B<--deactivate>
+will remove the active mark from the specified remote script
+without activating a replacement.
+
+=item B<--exec>
+will take a file-name containing commands as though given in the normal
+read-eval-print loop.
+
+=back
 
 Note that B<--check> and B<--edit> require a server which advertises
 a "VERSION" capability, see B<--ignoreserverversion> to override.
@@ -2296,8 +2334,14 @@ the command-line for compatibility with sieveshell.)
 
 =head1 ENVIRONMENT
 
-C<$IMAP_SERVER> for a default IMAP server.  C<$USERNAME> and C<$LOGNAME>
-where the C<getpwuid()> function is not available.
+C<$IMAP_SERVER> for a default IMAP server.
+
+C<$USERNAME> and C<$LOGNAME> where the C<getpwuid()> function is not available.
+
+C<$SSL_CERT_DIR> and C<$SSL_CERT_FILE> for locating default
+Certificate Authority trust anchors.
+
+C<$VISUAL>, else C<$EDITOR>, for the edit action.
 
 =head1 BUGS
 
@@ -2378,6 +2422,7 @@ F<Term::ReadKey> to get passwords without echo.
 Various other Perl modules which are believed to be standard.
 F<Term::ReadLine> will significantly improve interactive mode.
 F<Term::ReadLine::Gnu> will improve it further by allowing tab-completion.
+F<Mozilla::PublicSuffix> is highly recommended and will improve security.
 
 =head1 INTEROPERABILITY
 
