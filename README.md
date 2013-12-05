@@ -54,6 +54,23 @@ SSL certificates are assumed to be in /etc/ssl/certs/ but this is
 configured at the very start of the script.
 
 
+### MacOS
+
+For MacOS, a Homebrew Tap is provided; run:
+
+```console
+  $ sudo cpan -i Mozilla::PublicSuffix
+  $ brew tap philpennock/protocols
+  $ brew options sieve-connect
+  $ brew install sieve-connect
+```
+
+Note that by default, GSSAPI is disabled (see Problems below) and readline can
+optionally be disabled.  At time of writing, a `:recommended` `:perl`
+dependency appears to be a hard requirement, not merely recommended, thus the
+need to manually install `Mozilla::PublicSuffix`.
+
+
 Pre-Requisites
 --------------
 
