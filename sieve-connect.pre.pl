@@ -2054,7 +2054,7 @@ sub derive_sieve_server
 		return (undef, undef, undef) unless $have_mozilla_public_suffix;
 	}
 
-	if ($have_mozilla_public_suffix) {
+	if ($have_mozilla_public_suffix and defined public_suffix($host)) {
 		$domain = $host;
 		debug "findserver: walking up hostname domains with Mozilla PSL";
 		while ($domain ne public_suffix($domain)) {
@@ -2074,7 +2074,7 @@ sub derive_sieve_server
 				last;
 			}
 		}
-	} else {
+	} elsif (defined $domain) {
 		debug "findserver: checking SRV records for: $domain";
 		my $have_srv = domain_sieve_server $domain;
 		if (defined $have_srv) {
@@ -2085,6 +2085,9 @@ sub derive_sieve_server
 			debug "findserver: SRV record explicitly says 'no service'";
 			return (undef, undef, 1); # force off SRV lookups
 		}
+	} else {
+		# $domain not set, so not "host.domain.tld", so probably host.local
+		debug "findserver: no public suffix and not in a host within a public domain";
 	}
 
 	# We give up, say nothing
