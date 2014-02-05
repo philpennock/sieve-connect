@@ -1039,6 +1039,14 @@ my %sieve_commands = (
 		params => 0,
 	},
 );
+if ($DEBUGGING) {
+	$sieve_commands{'debug'} = {
+		routine => \&aux_toggle_debugging,
+		help => 'debugging on or off',
+		params => 0,
+		params_max => 1,
+	};
+}
 
 my %subst_patterns = (
 	DATE		=> sub { return strftime '%Y-%m-%d', gmtime() },
@@ -1612,6 +1620,24 @@ sub aux_list_keywords
 {
 	print "Command parameters may have these \%KEYWORD patterns:\n";
 	print "\t\%$_\n" foreach sort keys %subst_patterns;
+}
+
+sub aux_toggle_debugging
+{
+	my ($sock, $toggledir) = @_;
+	unless (defined $toggledir and length $toggledir) {
+		$DEBUGGING = $DEBUGGING ? 0 : 1;
+		print "Debugging set to: $DEBUGGING\n";
+		return;
+	}
+	if (grep {$_ eq lc($toggledir)} qw(yes on true enable 1)) {
+		$DEBUGGING = 1;
+	} elsif (grep {$_ eq lc($toggledir)} qw(no off false disable 0)) {
+		$DEBUGGING = 0;
+	} else {
+		print "Unrecognised debugging value: $toggledir\n";
+	}
+	print "Debugging set to: $DEBUGGING\n";
 }
 
 # ######################################################################
