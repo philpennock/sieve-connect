@@ -2,7 +2,7 @@
 #
 # MANAGESIEVE (timsieved) client script
 #
-# Copyright © 2006-2013 Phil Pennock.  All rights reserved.
+# Copyright © 2006-2014 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -180,6 +180,7 @@ my $remotesievename;
 my $port = undef;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $ssl_cert_fingerprint, $passwordfd);
 my ($tlscapath, $tlscafile);
+my $tls_explicit_hostname = undef;
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
 my $opt_version_req = 0;
@@ -208,6 +209,7 @@ GetOptions(
 	"tlscertfingerprint|sslcertfingerprint=s" => \$ssl_cert_fingerprint,
 	"tlscapath=s"	=> \$tlscapath,
 	"tlscafile=s"	=> \$tlscafile,
+	"tlshostname=s"	=> \$tls_explicit_hostname,
 	"noclearauth"	=> \$forbid_clearauth,
 	"noclearchan"	=> sub { $forbid_clearauth = $forbid_clearchan = 1 },
 	"4"		=> sub { $net_domain = AF_INET },
@@ -343,6 +345,7 @@ if ($action eq 'deactivate' and defined $remotesievename) {
 # for us in future. So, TLS negotiations do not use insecure hostnames from
 # DNS.
 my $trusted_server = $server;
+$trusted_server = $tls_explicit_hostname if defined $tls_explicit_hostname;
 
 my @host_port_pairs;
 
@@ -2143,6 +2146,7 @@ sieve-connect - managesieve command-line client
                [--notlsverify|--nosslverify]
                [--tlscertfingerprint|--sslcertfingerprint <dgsttype:digest>]
                [--tlscapath <ca_directory>]|[--tlscafile <ca_file>]
+               [--tlshostname <hostname>]
                [--noclearauth] [--noclearchan]
                [--authmech <mechanism>]
                [--ignoreserverversion]
@@ -2203,6 +2207,11 @@ If a server is provided by B<--server> then that takes precedence.
 If that option is not present, then C<$IMAP_SERVER> from the environment is
 checked and, if it's not a unix-domain socket path, is used with any port
 specification stripped off.
+
+For TLS verification, this is the default name used for hostnames (both SNI and
+verification); no information derived from DNS is currently used as the trusted
+hostname identifier.  (This is subject to change in future, given DNSSEC).  The
+B<--tlshostname> option can be used to override the name used for TLS.
 
 Next, unless B<--nosrv> is given, checks are made for SRV records so as to search
 for a default server; if the F<Mozilla::PublicSuffix> Perl module is available,
