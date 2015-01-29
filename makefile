@@ -71,7 +71,9 @@ $(SCRIPTDIST): $(SCRIPTSRC) versionfile
 	chmod +x $(SCRIPTDIST)
 
 # This can use non-portable commands, so shove into subdir
-tarball: $(DISTFILES) versionfile
+tarball: $(DISTFILES) versionfile $(METAFILES)
+	@echo "checking copyright years up to date ..."
+	./repo-generate copyright $(SCRIPTSRC) LICENSE
 	pax -w -s ",^,$(TARPREFIX)-`cat versionfile`/," $(DISTFILES) > $(TARPREFIX)-`cat versionfile`.tar
 	bzip2 -9 $(TARPREFIX)-`cat versionfile`.tar
 
@@ -86,8 +88,6 @@ ChangeLog: $(METAFILES)
 	./repo-generate changelog > ChangeLog
 
 datefile versionfile: $(METAFILES)
-	@echo "checking copyright years up to date ..."
-	./repo-generate copyright $(SCRIPTSRC) LICENSE
 	./repo-generate version > versionfile
 	./repo-generate date > datefile
 
