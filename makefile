@@ -47,6 +47,17 @@ bin $(SCRIPTNAME): $(SCRIPTDIST)
 clean:
 	$(RM) -f "./$(SCRIPTNAME)"
 
+# This target is for GNU make but being defined here does not prevent BSD make
+# from using this file (the target won't work on BSD, but that's okay).
+# Where BSD lets you `make -V VARNAME` to print the value of a variable instead
+# of building a target, this gives GNU make a target `print-VARNAME` to print
+# the value.  I have so missed this when using GNU make.
+#
+# This rule comes from a comment on
+#   <http://blog.jgc.org/2015/04/the-one-line-you-should-add-to-every.html>
+# where the commenter provided the shell meta-character-safe version.
+print-%: ; @echo '$(subst ','\'',$*=$($*))'
+
 # ======================================================================
 # Targets after here are for distributors
 
