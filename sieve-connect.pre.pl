@@ -318,7 +318,7 @@ if (defined $sslkeyfile) {
 }
 
 if (defined $localsievename and not defined $remotesievename) {
-	$remotesievename = $localsievename;
+	$remotesievename = File::Basename::basename($localsievename);
 }
 
 if (defined $localsievename and $action =~ /upload|checkscript/) {
