@@ -2370,6 +2370,36 @@ a "VERSION" capability, see B<--ignoreserverversion> to override.
 (If B<--server> is not explicitly stated, it may be provided at the end of
 the command-line for compatibility with sieveshell.)
 
+=head1 EXAMPLES
+
+Connect to a Sieve server and enter interactive mode, when you already have a
+Kerberos ticket and GSSAPI/Kerberos is available:
+
+    $ sieve-connect --server imap.example.org
+    ReadLine support enabled.
+    >
+
+Do the same, but with C<$IMAP_SERVER> set in environ:
+
+    $ sieve-connect
+    ReadLine support enabled.
+    >
+
+Upload a script from the current directory, being prompted to authenticate;
+note that the script won't be activated (uploading just makes it available,
+possibly with the server having first checked it for errors):
+
+    $ sieve-connect --server imap.example.org --user fred@example.org \
+         --localsieve fred.siv --upload
+    Sieve/IMAP Password: [password here, not shown]
+    $
+
+See a lot of what's happening under the covers:
+
+    $ sieve-connect --debug
+    [ snip 30 or so lines ]
+    >
+
 =head1 ENVIRONMENT
 
 C<$IMAP_SERVER> for a default IMAP server.
@@ -2449,6 +2479,22 @@ There is a low-volume announcement list for new releases; the web interface is
 at L<http://mail.globnix.net/mailman/listinfo/sieve-connect-announce> or you
 can send mail,
 L<mailto:sieve-connect-announce-request@spodhuis.org?subject=subscribe>
+
+=head1 AVAILABILITY
+
+Releases are made available at
+L<http://people.spodhuis.org/phil.pennock/software/> in the form of a tarball
+and an associated detached PGP signature.  All releases are signed, always, and
+always have been.  The signing key is in the PGP Strong Set (which means
+there's a stronger chance that you can verify the identity of the key owner).
+Historically, releases were signed with key C<0x403043153903637F>.  If you're
+reading this text from a release, then I've cut a new release since switching
+to key C<0x4D1E900E14C1CC04> and I expect that 4096RSA key to be used, barring
+major incident.
+
+The source code is available via Git; the authoritative public-facing
+repository is currently L<https://github.com/philpennock/sieve-connect> and
+pull-requests and bug-reports are accepted there.
 
 =head1 PREREQUISITES
 
