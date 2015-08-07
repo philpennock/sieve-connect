@@ -74,12 +74,8 @@ Makefile: makefile
 	sed '/Targets after here are for distributors/,$$d' < makefile > Makefile
 
 $(SCRIPTDIST): $(SCRIPTSRC) versionfile
-	perl -MFile::Slurp -p < $(SCRIPTSRC) > $(SCRIPTDIST) -e ' \
-		BEGIN { $$newver = read_file("versionfile"); chomp $$newver; }; \
-		next unless /VERSION.*MAGIC LINE REPLACED IN DISTRIBUTION/; \
-		$$_ = qq{our \$$VERSION = '"'"'$$newver'"'"';\n}; \
-	'
-	chmod +x $(SCRIPTDIST)
+	@echo "embedding version number into distribution form of script"
+	./repo-generate versionfilter $(SCRIPTSRC) $(SCRIPTDIST)
 
 # This can use non-portable commands, so shove into subdir
 tarball: $(DISTFILES) versionfile $(METAFILES)

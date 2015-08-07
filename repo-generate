@@ -1,8 +1,14 @@
 #!/bin/sh
 
+progname="$(basename "$0")"
 export TZ=''
 
 release_pattern='v[0-9]*'
+
+die() {
+	printf >&2 "%s: %s\n" "$progname" "$*"
+	exit 1
+}
 
 git_last_version() {
 	git describe --match="$release_pattern"
@@ -30,14 +36,12 @@ gen_changelog() {
 }
 
 missing_year() {
-	echo >&2 "Current year not in $* Copyright line"
-	exit 1
+	die "Current year not in $* Copyright line"
 }
 
 check_copyright() {
 	if [ $# -eq 0 ]; then
-		echo >&2 "Missing files to check for copyright year"
-		exit 1
+		die "Missing files to check for copyright year"
 	fi
 	local fn
 	for fn
@@ -54,6 +58,19 @@ gen_date() {
 	git show -s --format=%ci HEAD | cut -d ' ' -f 1
 }
 
+filter_embed_version() {
+	[ $# -ne 2 ] && die "Usage: ${progname} versionfilter <infile> <outfile>"
+	[ -f versionfile ] || die "missing file: versionfile"
+	local repo_src="$1"
+	local distributed_src="$2"
+
+	perl -MFile::Slurp -p < "${repo_src:?}" > "${distributed_src:?}" -e '
+BEGIN { $newver = read_file("versionfile"); chomp $newver; };
+next unless /VERSION.*MAGIC LINE REPLACED IN DISTRIBUTION/;
+$_ = qq{our \$VERSION = '"'"'$newver'"'"';\n};'
+	chmod +x "${distributed_src:?}"
+}
+
 cmd="$1"
 shift
 
@@ -62,6 +79,7 @@ case "${cmd:-unknown}" in
 	changelog) gen_changelog "$@" ;;
 	date) gen_date "$@" ;;
 	version) gen_version "$@" ;;
-	help) echo "$0 changelog|date|version|{copyright <files>}" ;;
+	versionfilter) filter_embed_version "$@" ;;
+	help) echo "$0 changelog|date|version|{copyright <files>}|{versionfilter <in> <out>}" ;;
 	*) echo >&2 "$0: unknown action" ; exit 1 ;;
 esac
