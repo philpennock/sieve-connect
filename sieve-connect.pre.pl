@@ -604,6 +604,15 @@ if (exists $capa{STARTTLS}) {
 		$ssl_options{'SSL_verifycn_scheme'} = 'http';
 	}
 
+	if ($ssl_options{'SSL_verify_mode'} != 0x00
+		and !exists $ssl_options{'SSL_ca_path'}
+		and !exists $ssl_options{'SSL_ca_file'}  ) {
+
+		print "No SSL_ca_file or SSL_ca_path found but tls verification requested.\n";
+		print "If you really want to connect without verification, use --notlsverify\n";
+		exit 1;
+	}
+
 	if ($DEBUGGING) {
 
 	debug("-T- will use TLS certs from " .
