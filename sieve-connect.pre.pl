@@ -52,6 +52,19 @@ my %ssl_options = (
 # These defaults can be overriden on the cmdline:
 my ($forbid_clearauth, $forbid_clearchan) = (0, 0);
 
+# Note Well: if SSL/TLS verification is enabled, that is equivalent to
+# $forbid_clearchan, since no TLS means no verification possible.  But
+# if verification is not required then by default clearchan is allowed, not
+# just unverified TLS.  The command-line overrides these.
+# This is a breaking change between v0.87 and v0.88 as these semantics were
+# firmed up and --clearchan was added to restore the old default behaviour
+# if TLS was never offered but verification was enabled.
+#
+# I expect this to cause complaints as it's not backwards compatible, but the
+# old behaviour was susceptible to MitM connection downgrade by removing the
+# capability advertisement.  The new behaviour is a security improvement, and
+# the old semantics can be obtained by explicitly setting --clearchan.
+
 # Add a key to this to blacklist that authentication mechanism.  Might be
 # useful on some platforms with broken libraries.  Make sure the key is
 # upper-case!
@@ -181,6 +194,8 @@ my $port = undef;
 my ($user, $authzid, $authmech, $sslkeyfile, $sslcertfile, $ssl_cert_fingerprint, $passwordfd);
 my ($tlscapath, $tlscafile);
 my $tls_explicit_hostname = undef;
+my $tls_sufficiently_configured = 0;
+my $clearchan_explicitly_set = 0;
 my $prioritise_auth_external = 0;
 my $dump_tls_information = 0;
 my $opt_version_req = 0;
@@ -211,7 +226,8 @@ GetOptions(
 	"tlscafile=s"	=> \$tlscafile,
 	"tlshostname=s"	=> \$tls_explicit_hostname,
 	"noclearauth"	=> \$forbid_clearauth,
-	"noclearchan"	=> sub { $forbid_clearauth = $forbid_clearchan = 1 },
+	"noclearchan"	=> sub { $clearchan_explicitly_set = $forbid_clearauth = $forbid_clearchan = 1 },
+	"clearchan"	=> sub { $forbid_clearchan = 0; $clearchan_explicitly_set = 1; },
 	"4"		=> sub { $net_domain = AF_INET },
 	"6"		=> sub { $net_domain = AF_INET6 },
 	"debug"		=> \$DEBUGGING,
@@ -336,6 +352,25 @@ if ($action eq 'deactivate' and defined $remotesievename) {
 	# Future feature -- list and deactivate if specified script is
 	# current.  That has a concurrency race condition and is not
 	# conceivably useful, so ignored at least for the present.
+}
+
+# This happens after fixup_ssl_configuration() above, so we've gone to
+# some lengths to get CA anchors available already.
+if (exists $ssl_options{SSL_ca_path} or exists $ssl_options{SSL_ca_file}) {
+	$tls_sufficiently_configured = 1;
+}
+if ($ssl_options{'SSL_verify_mode'} != 0x00) {
+	unless (exists $ENV{SIEVECONNECT_INSECURE_CLEARTEXT_FALLBACK} and
+		length $ENV{SIEVECONNECT_INSECURE_CLEARTEXT_FALLBACK}) {
+		$forbid_clearchan = 1 unless $clearchan_explicitly_set;
+	}
+
+	if ($forbid_clearchan and not $tls_sufficiently_configured) {
+		warn("TLS verification is ON, so non-TLS is DISABLED\n");
+		warn(" but we're MISSING configuration information for CA anchors.\n");
+		warn(" No secure connection possible, aborting early.\n");
+		die("fix TLS setup, else use --noclearchan or --notlsverify\n");
+	}
 }
 
 # ######################################################################
@@ -593,7 +628,12 @@ parse_capabilities $sock;
 
 my $tls_bitlength = -1;
 
-if (exists $capa{STARTTLS}) {
+# This will be called immediately after function definition if
+# exists $capa{STARTTLS}; moved into a function to make it easy to abort when TLS
+# is not mandatory.
+#
+# Return 1 if all okay, 0 if TLS not configured, or die on issues.
+sub handle_capa_STARTTLS {
 	# Always set SSL_hostname for SNI, only set the verification
 	# modes if not disabled.
 	$ssl_options{'SSL_hostname'} = $trusted_server;
@@ -602,6 +642,22 @@ if (exists $capa{STARTTLS}) {
 		# we want full wildcard support in same style that most admins
 		# are already familiar with:
 		$ssl_options{'SSL_verifycn_scheme'} = 'http';
+
+		unless ($tls_sufficiently_configured) {
+			debug("-T- offered STARTTLS, want verification, TLS insufficiently configured to proceed");
+			warn("offered STARTTLS, no CA anchor information available\n");
+			if ($forbid_clearchan) {
+				# we shouldn't even have tried to establish a connection in this scenario,
+				# but protect against screw-ups
+				debug("-T- we should not even be here (BUG please report!)");
+				warn("cleartext communications disabled, no TLS verification possible\n");
+				die("fix TLS setup, else use --clearchan or --notlsverify\n");
+			}
+			# to be at this line of code, in theory the invoker must have explictly set --clearchan
+			# (--notlsverify would skip this entire block).
+			return 0;
+		}
+
 	}
 
 	if ($DEBUGGING) {
@@ -722,8 +778,16 @@ if (exists $capa{STARTTLS}) {
 		parse_capabilities($sock,
 			external_first => $prioritise_auth_external);
 	}
-} elsif ($forbid_clearchan) {
-	die "TLS not offered, SASL confidentiality not supported in client.\n";
+	return 1;
+}
+
+my $tls_was_setup_okay = 0;
+if (exists $capa{STARTTLS}) {
+	$tls_was_setup_okay = handle_capa_STARTTLS();
+}
+
+if ($forbid_clearchan and not $tls_was_setup_okay) {
+	die "TLS not established, SASL confidentiality not supported in client.\n";
 }
 
 my %authen_sasl_params;
@@ -2016,6 +2080,7 @@ sub fixup_ssl_configuration
 		debug("setup: Have set SSL_ca_path to $ssl_options{'SSL_ca_path'}");
 		return;
 	}
+	debug("setup: FAILED to find SSL CA configuration, this will end badly");
 }
 
 # returns 1 "okay", 0 "definitely not available", undef "unknown"
@@ -2173,7 +2238,7 @@ sieve-connect - managesieve command-line client
                [--tlscertfingerprint|--sslcertfingerprint <dgsttype:digest>]
                [--tlscapath <ca_directory>]|[--tlscafile <ca_file>]
                [--tlshostname <hostname>]
-               [--noclearauth] [--noclearchan]
+               [--noclearauth] [--noclearchan] [--clearchan]
                [--authmech <mechanism>]
                [--ignoreserverversion]
                [--upload|--download|--list|--delete|--checkscript|--edit|
@@ -2299,6 +2364,11 @@ active attacks and you are unable to arrange for the relevant Certificate
 Authority certificate to be available, then you can lower your safety with the
 B<--notlsverify> option, also spelt B<--nosslverify>.
 
+If verification is requested (the default) but TLS is not available, we
+do not fall back to cleartext insecure communications.  Use B<--clearchan>
+to change that, or set C<$SIEVECONNECT_INSECURE_CLEARTEXT_FALLBACK> non-empty
+in the environment.
+
 If you don't want to (only) rely on CA systems you can explicitly set an
 expected server certificate fingerprint using the B<--tlscertfingerprint>
 option, also spelt B<--sslcertfingerprint>.  If you wish to ignore CA
@@ -2409,6 +2479,9 @@ C<$USERNAME> and C<$LOGNAME> where the C<getpwuid()> function is not available.
 C<$SSL_CERT_DIR> and C<$SSL_CERT_FILE> for locating default
 Certificate Authority trust anchors.
 
+C<$SIEVECONNECT_INSECURE_CLEARTEXT_FALLBACK> to preserve old poor hygiene
+around TLS fallback.
+
 C<$VISUAL>, else C<$EDITOR>, for the edit action.
 
 =head1 BUGS
@@ -2470,6 +2543,16 @@ and deliberately designed to be compatible with sieveshell.
 Versions prior to 0.85 did not actually verify the peer certificate identity,
 although this author stupidly believed that it did.
 API/expectations mismatch.
+
+Versions prior to 0.88 defaulted to falling back to cleartext in the absence
+of STARTTLS if CA information was configured locally and verification
+requested (the default).
+Today, this is no longer acceptable for client-server communications; either
+verify-and-require-TLS or don't-verify-and-fallback-to-cleartext.
+This is the new policy going forward; use B<--clearchan> to allow fallback
+while still trying to verify TLS (but why?) or B<--notlsverify> to skip
+verification.  Or add C<$SIEVECONNECT_INSECURE_CLEARTEXT_FALLBACK> non-empty
+in the environment to avoid the implicit noclearchan-when-verify-enabled.
 
 =head1 AUTHOR
 
