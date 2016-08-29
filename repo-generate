@@ -20,7 +20,7 @@ files_changed_in_last_version() {
 
 partial_changelog() {
 # the sed filter is against spammers
-	git log --decorate=short --date=iso "$@" | sed '/^Author:/s/ <.*//'
+	git log --decorate=short --date=iso "$@" | sed '/^Author:/s/ <.*//' | sed '/^Author:/s/ [A-Za-z0-9._-]\+@.*$//'
 }
 
 gen_changelog() {
