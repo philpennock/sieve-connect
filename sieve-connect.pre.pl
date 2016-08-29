@@ -759,12 +759,34 @@ sub handle_capa_STARTTLS
 	# This means that if they don't support NOOP by 2.3.14, I have to
 	# figure out how to decide what is safe and backtrack which version
 	# precisely was the first to send the capability response correctly.
+	#
+	# There is also at least one special version which needs special
+	# treatment despite having a higher version number: Kolab's patched
+	# "nocaps" Cyrus version (see below).
 	my $use_noop = 1;
-	if (exists $capa{"IMPLEMENTATION"} and
-		$capa{"IMPLEMENTATION"} =~ /^Cyrus timsieved v2\.3\.(\d+)\z/ and
-		$1 >= 13) {
+	my $timsieved_nocaps = 0;
+	my $cyrus_version_extension = '';
+	if (exists $capa{"IMPLEMENTATION"}) {
+	    if ($capa{"IMPLEMENTATION"} =~ /^Cyrus timsieved v2\.3\.(\d+)\z/
+		    and $1 >= 13) {
 		debug("--- Cyrus drops connection with dubious log msg if send NOOP, skip that");
 		$use_noop = 0;
+	    } elsif ($capa{"IMPLEMENTATION"} =~
+		    /^Cyrus timsieved v2\.3\.\d+-([\w-]*nocaps)\z/ ) {
+		$cyrus_version_extension = $1;
+		# Special case: Cyrus may have been patched to not resend its
+		# capabilities for compatibility with older Kontact versions.
+		# Kolab does this, for example; see
+		# https://roundup.kolab.org/issue2443.  This patch may even
+		# have been applied to more modern versions such as v2.3.16.
+		# For this reason, we need to specifically check for this case.
+		# If a nocaps server is detected, nothing needs to be done (see
+		# the $timsieved_nocaps check below).
+		debug("--- Special Cyrus server version detected:" .
+			" $cyrus_version_extension");
+		$use_noop = 0;
+		$timsieved_nocaps = 1;
+	    }
 	}
 
 	if ($use_noop) {
@@ -773,6 +795,10 @@ sub handle_capa_STARTTLS
 		parse_capabilities($sock,
 			sent_a_noop	=> $noop_tag,
 			external_first	=> $prioritise_auth_external);
+	} elsif ($timsieved_nocaps) {
+	    # For the nocaps version of Cyrus, nothing should be done here.
+	    debug("--- $cyrus_version_extension: using capabilities" .
+		    " transmitted before STARTTLS!");
 	} else {
 		parse_capabilities($sock,
 			external_first	=> $prioritise_auth_external);
