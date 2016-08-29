@@ -633,7 +633,8 @@ my $tls_bitlength = -1;
 # is not mandatory.
 #
 # Return 1 if all okay, 0 if TLS not configured, or die on issues.
-sub handle_capa_STARTTLS {
+sub handle_capa_STARTTLS
+{
 	# Always set SSL_hostname for SNI, only set the verification
 	# modes if not disabled.
 	$ssl_options{'SSL_hostname'} = $trusted_server;
