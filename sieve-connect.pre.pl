@@ -185,6 +185,8 @@ sub closedie_NOmsg;
 sub die_NOmsg;
 sub fixup_ssl_configuration;
 sub derive_sieve_server;
+sub escalate_warnings_to_exitcode;
+sub exit_with_result_based_on_escalated_warnings;
 
 my $DEBUGGING_SASL = 0;
 my $DATASTART = tell DATA;
@@ -205,6 +207,7 @@ my ($server, $realm);
 my $net_domain = AF_UNSPEC;
 my $action = 'command-loop';
 my $execscript;
+
 GetOptions(
 	# settings which adjust how we connect
 	"localsieve=s"	=> \$localsievename,
@@ -1185,6 +1188,7 @@ unless ($ignore_server_version) {
 # apply, since GetOptions() sets $action for us.
 # 
 if ($action ne 'command-loop' and exists $sieve_commands{$action}{action}) {
+	escalate_warnings_to_exitcode();
 	closedie $sock, "internal error, no routine for \'$action\'"
 		unless exists $sieve_commands{$action}{routine};
 	my @params;
@@ -1207,7 +1211,7 @@ if ($action ne 'command-loop' and exists $sieve_commands{$action}{action}) {
 		$saveddie =~ s/^QUIT:\n?//;
 		die $saveddie if length $saveddie;
 	}
-	exit 0;
+	exit_with_result_based_on_escalated_warnings();
 }
 
 if ($action ne 'command-loop') {
@@ -1224,6 +1228,7 @@ $SIG{'PIPE'} = sub {
 };
 
 if (defined $execscript) {
+	escalate_warnings_to_exitcode();
 	$report_lineno = 1;
 	my $scripth = new IO::File $execscript, '<'
 		or closedie $sock, "Unable to read-open($execscript): $!\n";
@@ -1387,7 +1392,16 @@ $cmdlinedone_func->() if defined $cmdlinedone_func;
 
 sfinish $sock;
 print "\n";
-exit $exitval;
+# We can exit non-zero two ways:
+#  1. our tracked exitval here
+#  2. if nothing was serious enough to be an error for interactive use but
+#     triggered warnings, then we should have set up a warn-handler to bump
+#     a count, so we can emit a message with a count, then exit 1.
+#     * nb: it's safe to call this even if the non-interactive setup routine
+#       is never called, because the value will just stay stuck at 0 and we
+#       degenerate to `exit 0;`
+exit $exitval if $exitval;
+exit_with_result_based_on_escalated_warnings();
 
 # ######################################################################
 # The sieve commands.
@@ -1783,6 +1797,30 @@ sub complete_rl_sieve
 
 	} else {
 		return ();
+	}
+}
+
+# ######################################################################
+# Warnings escalation if not interactive
+
+{
+	my $seen_warnings = 0;
+
+	sub escalate_warnings_to_exitcode
+	{
+		$SIG{__WARN__} = sub {
+			$seen_warnings++;
+			# perldoc -f warn explicitly states that it's safe to call warn
+			# from within a __WARN__ handler.
+			warn(@_);
+		};
+	}
+
+	sub exit_with_result_based_on_escalated_warnings
+	{
+		exit 0 unless $seen_warnings;
+		warn("saw $seen_warnings problems, exiting 1\n");
+		exit 1;
 	}
 }
 
