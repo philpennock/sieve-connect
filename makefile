@@ -22,7 +22,7 @@ SCRIPTDIST=sieve-connect.pl
 TARPREFIX=sieve-connect
 DISTFILES=$(SCRIPTDIST) $(MANPAGE) ChangeLog Makefile README.md LICENSE TODO find-perl58.sh
 GPG=gpg
-PGPSIGNKEY=0x3903637F
+PGPSIGNKEY=0x4D1E900E14C1CC04
 
 # ======================================================================
 # Targets for builders/installers
