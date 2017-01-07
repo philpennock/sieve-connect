@@ -250,7 +250,9 @@ GetOptions(
 	"edit"		=> sub { $action = 'edit' },
 	"exec|e=s"	=> sub { $execscript = $_[1]; $action='command-loop' },
 	# then administrivia
-	'help|?'	=> sub { pod2usage(0) },
+	'help|?'	=> sub { pod2usage(-exitstatus => 0,
+				 -verbose => 99, -sections => "SYNOPSIS",
+				 -message => "Use --man for more help text\n") },
 	'man'		=> sub { pod2usage(-exitstatus => 0, -verbose => 2) },
 	'version'	=> \$opt_version_req, # --version --debug should work
 ) or pod2usage(2);
@@ -2533,6 +2535,15 @@ See a lot of what's happening under the covers:
 
     $ sieve-connect --debug
     [ snip 30 or so lines ]
+    >
+
+Use B<--passwordfd> to supply the password using stdio instead of argv or
+environ, where it might show up in process listings; this example assumes a
+shell with "here-strings", such as zsh or bash:
+
+    $   password='...'
+    $ sieve-connect --authmech digest-md5 --passwordfd=5 5<<<"$password"
+    ReadLine support enabled.
     >
 
 =head1 ENVIRONMENT
