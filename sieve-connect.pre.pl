@@ -30,6 +30,8 @@
 
 use warnings;
 use strict;
+# Good modern Perl practice and some of our features warrant this:
+BEGIN { @INC = grep {$_ ne '.'} @INC };
 
 # If you can't update /etc/services to contain an entry for 'sieve' and you're
 # not using 4190 (specified in RFC 5804) and you're not publishing an SRV
