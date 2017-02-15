@@ -5,10 +5,11 @@ export TZ=''
 
 release_pattern='v[0-9]*'
 
-die() {
+warn() {
 	printf >&2 "%s: %s\n" "$progname" "$*"
-	exit 1
 }
+
+die() { warn "$@"; exit 1; }
 
 git_last_version() {
 	git describe --match="$release_pattern"
@@ -36,7 +37,10 @@ gen_changelog() {
 }
 
 missing_year() {
-	die "Current year not in $* Copyright line"
+	local complain
+	complain=die
+	[ -n "${RELEASE_IGNORE_COPYRIGHT_YEAR:-}" ] && complain=warn
+	$complain "Current year not in $* Copyright line"
 }
 
 check_copyright() {
@@ -51,7 +55,10 @@ check_copyright() {
 }
 
 gen_version() {
-	git describe --match="$release_pattern" --dirty=-XX | sed -n 's/^v//p'
+	local dirty
+	dirty='--dirty=-XX'
+	[ -n "${RELEASE_PRETEND_CLEAN_REPO:-}" ] && dirty=''
+	git describe --match="$release_pattern" $dirty | sed -n 's/^v//p'
 }
 
 gen_date() {
