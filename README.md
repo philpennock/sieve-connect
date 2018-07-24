@@ -1,6 +1,12 @@
 sieve-connect
 =============
 
+[![FreeBSD](https://img.shields.io/badge/distros-freebsd-8c0707.svg)](https://www.freshports.org/mail/sieve-connect)
+[![Debian](https://img.shields.io/badge/distros-debian-c70036.svg)](https://buildd.debian.org/status/package.php?p=sieve-connect&suite=buster)
+[![Ubuntu](https://img.shields.io/badge/distros-ubuntu-db4923.svg)](https://launchpad.net/ubuntu/bionic/+package/sieve-connect)
+[![Gentoo](https://img.shields.io/badge/distros-gentoo-4e4371.svg)](https://packages.gentoo.org/packages/mail-filter/sieve-connect)
+[![Arch Linux](https://img.shields.io/badge/distros-archlinux-1792d0.svg)](https://aur.archlinux.org/packages/sieve-connect)
+
 This is sieve-connect.  A client for the ManageSieve protocol, as
 specifed in RFC 5804.  Historically, this was MANAGESIEVE as implemented
 by timsieved in Cyrus IMAP.  This software is licensed and the terms are
@@ -105,6 +111,7 @@ Rather than rebuild Perl with `-DPERL_USE_SAFE_PUTENV`, when this affected me I
 chose to avoid having readline mess with `$LINES`/`$COLUMNS` and just edited
 `readline-$VER/terminal.c` to disable the call to `sh_set_lines_and_columns()`.
 
+  
 
 On some platforms, bad interactions between the `Authen::SASL::Perl` module's
 GSSAPI support and the platform GSSAPI libraries have been observed to cause
@@ -113,6 +120,18 @@ libraries is not an option, take a look at the `%blacklist_auth_mechanisms`
 definition in the user-editable part of the script and force-disable the
 mechanism which has broken platform Perl support.
 
+The root-cause issue is that the `perlgssapi-code` repo, and the `GSSAPI`
+module, is unmaintained with bug fixes from their mailing-list not having been
+applied for several years.  The project appears defunct and I'm not aware of a
+better alternative for Perl.  Details can be found at
+<https://sourceforge.net/p/perlgssapi/mailman/perlgssapi-developer> and I run
+with a locally-patched module.  The core of the fix is to avoid calling
+`gss_release_oid()` on a bunch of additional static values.
+I've published my existing workaround patch at
+<https://gist.github.com/philpennock/3f24e00cd7f3e1cb6b11974ff0eb8d47> in case
+it helps anyone else.
+
+  
 
 If you experience any other problems, or have better solutions to the above,
 please report them.
