@@ -1606,7 +1606,7 @@ sub sieve_edit
 	my ($sock, $remotefn) = @_; splice @_, 0, 2;
 	my ($rc, $key);
 
-	my ($fh,$localfn) = tempfile();
+	my ($fh,$localfn) = tempfile(SUFFIX => '.sieve');
 
 	sieve_download($sock, $remotefn, $localfn)
 		or die "failed to download script";
