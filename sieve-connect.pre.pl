@@ -699,11 +699,16 @@ sub handle_capa_STARTTLS
 		my $e = IO::Socket::SSL::errstr();
 		die "STARTTLS promotion failed: $e\n";
 	};
+	my $dbg_tls_conn_info = '';
 	if (exists $main::{"Net::"} and exists $main::{"Net::"}{"SSLeay::"}) {
-		my $t = Net::SSLeay::get_cipher_bits($sock->_get_ssl_object(), 0);
+		my $ctx = $sock->_get_ssl_object();
+		my $t = Net::SSLeay::get_cipher_bits($ctx, 0);
 		$tls_bitlength = $t if defined $t and $t;
+		$dbg_tls_conn_info = ' [' .
+			Net::SSLeay::get_version($ctx) . ' / ' .
+			Net::SSLeay::get_cipher($ctx) . ']';
 	}
-	debug("-T- TLS activated here [$tls_bitlength bits]");
+	debug("-T- TLS activated here [$tls_bitlength bits]$dbg_tls_conn_info");
 	if ($dump_tls_information) {
 		print $sock->dump_peer_certificate();
 		if ($DEBUGGING and
@@ -713,6 +718,9 @@ sub handle_capa_STARTTLS
 			# around behind IO::Socket::SSL's back.
 			print STDERR Net::SSLeay::PEM_get_string_X509(
 				$sock->peer_certificate());
+
+			my $session = Net::SSLeay::get_session($sock->_get_ssl_object());
+			Net::SSLeay::SESSION_print_fp(*STDERR, $session);
 		}
 	}
 	if (defined $ssl_cert_fingerprint) {
