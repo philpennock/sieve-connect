@@ -11,7 +11,7 @@ This is sieve-connect.  A client for the ManageSieve protocol, as
 specifed in RFC 5804.  Historically, this was MANAGESIEVE as implemented
 by timsieved in Cyrus IMAP.  This software is licensed and the terms are
 provided in the file "LICENSE" as supplied with this software (BSD
-license without the advertising clause).
+3-clause license).
 
 SIEVE is an RFC-specified language for mail filtering, which at time of
 writing is specified in a list of RFCs at the end of this document, plus

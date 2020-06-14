@@ -2,7 +2,7 @@
 #
 # MANAGESIEVE (timsieved) client script
 #
-# Copyright © 2006-2016 Phil Pennock.  All rights reserved.
+# Copyright © 2006-2018 Phil Pennock.  All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -1614,7 +1614,7 @@ sub sieve_edit
 	my ($sock, $remotefn) = @_; splice @_, 0, 2;
 	my ($rc, $key);
 
-	my ($fh,$localfn) = tempfile();
+	my ($fh,$localfn) = tempfile(SUFFIX => '.sieve');
 
 	sieve_download($sock, $remotefn, $localfn)
 		or die "failed to download script";
