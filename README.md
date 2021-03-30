@@ -6,6 +6,9 @@ sieve-connect
 [![Ubuntu](https://img.shields.io/badge/distros-ubuntu-db4923.svg)](https://launchpad.net/ubuntu/bionic/+package/sieve-connect)
 [![Gentoo](https://img.shields.io/badge/distros-gentoo-4e4371.svg)](https://packages.gentoo.org/packages/mail-filter/sieve-connect)
 [![Arch Linux](https://img.shields.io/badge/distros-archlinux-1792d0.svg)](https://aur.archlinux.org/packages/sieve-connect)
+<a href="https://repology.org/project/sieve-connect/versions">
+    <img src="https://repology.org/badge/vertical-allrepos/sieve-connect.svg" alt="Packaging status" align="right">
+</a>
 
 This is sieve-connect.  A client for the ManageSieve protocol, as
 specifed in RFC 5804.  Historically, this was MANAGESIEVE as implemented
