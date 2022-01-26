@@ -110,7 +110,7 @@ use File::Spec;
 use File::Temp qw/ tempfile /;
 use Getopt::Long;
 use IO::File;
-use IO::Socket::INET6;
+use IO::Socket::IP;
 use IO::Socket::SSL 1.14; # first version with automatic verification
 use MIME::Base64;
 use Net::DNS;
@@ -157,7 +157,7 @@ sub do_version_display {
 		foreach my $mod (
 				'Authen::SASL',
 				'Authen::SASL::Perl',
-				'IO::Socket::INET6',
+				'IO::Socket::IP',
 				'IO::Socket::SSL',
 				'Mozilla::PublicSuffix',
 				'Net::DNS',
@@ -445,12 +445,11 @@ foreach my $hp (@host_port_pairs) {
 	}
 
 	debug "connection: trying <${debug_host}:${port_candidate}>$debug_extra";
-	my $s = IO::Socket::INET6->new(
+	my $s = IO::Socket::IP->new(
 		PeerHost	=> $host_candidate,
 		PeerPort	=> $port_candidate,
 		Proto		=> 'tcp',
 		Domain		=> $net_domain,
-		MultiHomed	=> 1, # try multiple IPs (IPv4 works, v6 doesn't?)
 	);
 	unless (defined $s) {
 		my $extra = '';
@@ -2583,10 +2582,6 @@ to pass to a program.  But a server could choose to use literal strings,
 even though the results are defined as line-break separated -- that would
 mean that some linebreaks are special.  Hopefully no server will do this.
 
-If B<sieve-connect> fails to connect to an IPv4 server without the B<-4>
-option being explicitly passed, then you've encountered a portability
-issue in the F<IO::Socket::INET6> Perl library and need to upgrade that.
-
 Most historical implementations used port 2000 for ManageSieve.  RFC5804
 allocates port 4190.  This tool uses a port-spec of "sieve(4190)" as the
 default port, which means that an F</etc/services> (or substitute) entry for
@@ -2667,7 +2662,7 @@ pull-requests and bug-reports are accepted there.
 
 =head1 PREREQUISITES
 
-Perl.  F<Authen::SASL>.  F<IO::Socket::INET6>.
+Perl.  F<Authen::SASL>.  F<IO::Socket::IP>.
 F<IO::Socket::SSL> (at least version 1.14).  F<Pod::Usage>.
 F<Net::DNS> for SRV lookup.
 F<Pod::Simple::Text> for built-in man command (optional).
